@@ -18,6 +18,8 @@ W tego typu repozytoriach, ale też na oficjalnych stronach odszukać linki do k
 - LncFinder
 - ... lub inne, 9 to minimum, ale im wiecej tym lepiej.
 
+Ze względu na prawa najlepiej byłoby, żebyśmy zrobili własne kontenery, ale to dodatkowa robota. Więc jeżeli istnieja oficjalne (lub mniej oficjalne, ale działające) obrazy w sieci, to w pierwszej kolejniości korzystamy z nich. 
+
 Pobrać kontenery, przetestować czy działają, opisać procedury odpalania oraz krótko scharakteryzować algorytmy. 
 Najwazniejsze, zeby zbudować (z użyciem przygotowanych danych testowych - nsze sekwencje do testowania, trenowania i przewidywania) zestaw procedur dla każdego programu oddzialnie:
 - pobieranie dockera,

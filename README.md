@@ -1,7 +1,8 @@
 # CodPod_containers
 
-https://hub.docker.com/search?q=CPC2
-https://bio.tools/biocontainers
+Przykładowe strony:
+- https://hub.docker.com/search?q=CPC2
+- https://bio.tools/biocontainers
 
 W tego typu repozytoriach, ale też na oficjalnych stronach odszukać linki do kontenerów programó do przewidywania potencjału kodowania. 
 9-11 programów wystarczy, np.:

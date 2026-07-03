@@ -1,4 +1,3 @@
-Data description
 This repository contains full coding (cds) and non‑coding (nc) sequence datasets for three species: Homo sapiens, Mus musculus and Sus scrofa.
 For each species, coding and non‑coding sequences were split into training and test subsets in a 60/40 ratio (60% training, 40% test).
 

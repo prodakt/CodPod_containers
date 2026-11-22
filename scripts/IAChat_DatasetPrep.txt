@@ -1,0 +1,1780 @@
+
+muszę zrobić analizę naukową danych na zasadzie trenowanie i testowanie. Mam 3 grupy bardzo licznych danych: nc, pc, i ex (takie nazwy). W każdej grupie mam okolo 25-35 tysięcy prób, z czego w ex mam około 60 tysięcy. grupa nc i pc nie ma elementow wspólnych, ale grupa ex ma kilka tysięcy wspólnych z każdą z pozostałych. Na tych grupach (w sumie wspólnie) muszę zrobić analizy klasyfikowania danych. muszę cały zestaw podzielić na pół, ponieważ będę miał dwa poziomy analiz. W pierwszym poziomie mam grupę do trenowania i potem do przewidywania klasyfikacji i oceny jakości, czyli test. dzielę to na 20/80 (bo to są dane tylko do przetestowania metody, więc znam klasy nc i pc i chce przetestowac metode. Następnie w drugiej turze robię inną klasyfikację, wiec musze znowy wszystko podzielić na train i test 80/20, ale tutaj mam już połączone pc, nc i ex. i z tej grupy ex część jest znana, ale ją usunąłem i z pozostałej częsci będę musiał poklasyfikować na nc i pc. JAk bmądrze podzielić cały zestaw, żeby analizy były wiarygodne i żebym nic nie poduplikował?
+
+Aby analiza naukowa była w pełni wiarygodna i wolna od wycieku danych (data leakage), najbezpieczniejszym podejściem jest najpierw usunięcie wszystkich duplikatów między zbiorami, a następnie wykonanie podziału na poziomie unikalnych identyfikatorów próbek, zanim trafią one do poszczególnych etapów modelowania.
+W Twoim opisie kryje się kilka pułapek metodologicznych (m.in. wspólne elementy w grupie ex oraz mieszanie zbiorów między etapami), które mogłyby sztucznie zawyżyć wyniki lub zafałszować wnioski w publikacji naukowej.
+
+Krok 1: Czyszczenie i deduplikacja (Zanim zrobisz jakikolwiek podział)
+
+Z opisu wynika, że nc i pc są rozłączne, ale ex zawiera kilka tysięcy elementów wspólnych z nc oraz kilka tysięcy z pc.
+1. Zidentyfikuj części wspólne: Wyciągnij ze zbioru ex wszystkie próbki, które występują w nc lub pc.
+2. Usuń duplikaty z ex: Skoro już wiesz, że część próbek w ex tak naprawdę należy do nc lub pc, nie możesz ich traktować jako nieznanych próbek do klasyfikacji. Pozostaw w ex wyłącznie unikalne próbki, których nie ma ani w nc, ani w pc.
+	• Wskazówka: Te wspólne próbki (skoro już je usunąłeś, jak wspomniałeś) mogą Ci posłużyć jako dodatkowy, niezależny zbiór walidacyjny (tzw. gold standard) do sprawdzenia, jak model radzi sobie z danymi pochodzącymi ze źródła ex, ale o znanej etykiecie.
+
+Krok 2: Główny podział na dwa poziomy analiz (50% / 50%)
+
+Chcesz podzielić cały zestaw na pół, aby dwa poziomy analiz były od siebie całkowicie niezależne. To bardzo dobra praktyka w badaniach naukowych (zapobiega tzw. p-hackingowi i przeuczeniu hipotez).
+• Zbiór nc (ok. 30 tys.) \(\rightarrow \) podziel losowo (stratyfikowanie, jeśli masz podklasy) na Połowa A (15 tys.) i Połowa B (15 tys.).
+• Zbiór pc (ok. 30 tys.) \(\rightarrow \) podziel losowo na Połowa A (15 tys.) i Połowa B (15 tys.).
+• Zbiór ex (po deduplikacji, ok. 50 tys.) \(\rightarrow \) nie musisz dzielić go na pół, ponieważ w Poziomie 1 w ogóle go nie używasz (tam testujesz tylko metodę na znanych klasach nc i pc). Cały oczyszczony zbiór ex zostaw na Poziom 2.
+Uwaga: Zapisz na dysku listy ID próbek należących do Połowy A i Połowy B. Nigdy nie mieszaj ich ze sobą.
+
+Krok 3: Realizacja Poziomu 1 (Walidacja metody na Połowie A)
+
+W tym etapie sprawdzasz, czy Twój algorytm w ogóle potrafi odróżnić nc od pc.
+1. Bierzesz tylko Połowę A (nc_A + pc_A, łącznie ok. 30 tys. próbek).
+2. Dzielisz ją w proporcji 80% Train / 20% Test (z zachowaniem proporcji klas nc i pc, czyli stratify=y).
+	• Uwaga do Twojego opisu: Napisałeś „dzielę to na 20/80”. Standardem naukowym jest 80% na trening i 20% na test (większy zbiór uczy model, mniejszy ocenia jakość). Jeśli zrobisz odwrotnie (20% trening), model może być niedouczony, chyba że masz ku temu konkretny powód (np. symulacja małej próby).
+3. Trenujesz model na 80%, oceniasz metryki (ROC-AUC, F1-score, Precision/Recall) na 20%.
+
+Krok 4: Realizacja Poziomu 2 (Właściwa klasyfikacja na Połowie B + ex)
+
+Tutaj pojawia się najważniejsza kwestia metodologiczna: nie możesz trenować modelu na zbiorze ex, jeśli nie znasz jego prawdziwych etykiet (chyba że stosujesz semi-supervised learning, ale z opisu wynika, że chcesz po prostu sklasyfikować ex jako nc lub pc).
+1. Bierzesz Połowę B (nc_B + pc_B, ok. 30 tys. próbek) – to są Twoje dane z pewnymi etykietami.
+2. Dzielisz Połowę B na 80% Train / 20% Test:
+	• 80% Połowy B: Służy do ostatecznego wytrenowania modelu (już po dobraniu hiperparametrów w Poziomie 1).
+	• 20% Połowy B: Służy jako ostateczny, niezależny zbiór kontrolny (hold-out test set), żebyś mógł w pracy naukowej zaraportować, jaką skuteczność miał finalny model przed wypuszczeniem go na nieznane dane.
+3. Zbiór ex (cały oczyszczony): Traktujesz go jako zbiór inferencyjny (predykcyjny), a nie treningowy czy testowy. Przepuszczasz go przez model wytrenowany na 80% Połowy B i przypisujesz mu etykiety nc lub pc (wraz z prawdopodobieństwem predykcji).
+
+Schemat podsumowujący (Zero duplikatów, 100% czystości)
+
+
+Zbiór	Operacja wstępna	Poziom 1 (Test metody)	Poziom 2 (Właściwa analiza)
+nc (~30k)	Bez zmian	Połowa A (15k):
+80% Train / 20% Test	Połowa B (15k):
+80% Train / 20% Test
+pc (~30k)	Bez zmian	Połowa A (15k):
+80% Train / 20% Test	Połowa B (15k):
+80% Train / 20% Test
+ex (~60k)	Usunięcie części wspólnych z nc i pc	Nieużywany	100% pozostałych próbek:
+Zbiór do predykcji (klasyfikacji na nc/pc)
+
+
+Dlaczego taki podział obroni się przed recenzentami?
+
+• Brak wycieku danych (Data Leakage): Żadna próbka z Poziomu 1 nie bierze udziału w Poziomie 2. Żadna próbka z ex nie jest kopią próbki z nc lub pc.
+• Wiarygodność statystyczna: Zarówno w Poziomie 1, jak i w Poziomie 2 zachowujesz równe proporcje klas (nc i pc), co eliminuje problem niezbalansowania klas (class imbalance).
+• Kontrola jakości: Posiadanie 20% zbioru testowego w Poziomie 2 daje Ci twardy dowód na to, że finalny model nie przeuczył się na 80% Połowy B przed dokonaniem predykcji na ex.
+Jeśli chcesz, możemy doprecyzować ten schemat. Napisz mi:
+• Jaki rodzaj danych analizujesz (np. sekwencje biologiczne, obrazy, dane tabelaryczne, tekst) – niektóre wymagają grupowania przed podziałem (np. po pacjencie lub podobieństwie sekwencji)
+• Czy w Poziomie 2 planujesz użyć uczenia półnadzorowanego (semi-supervised learning), włączając część próbek ex do samego treningu?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+a zrób jeszcze podział tabelaryczny, żebym zobaczył to w tabelce.
+
+Oto szczegółowy schemat podziału danych w formie tabelarycznej, rozbity dokładnie na liczby próbek (przyjmując uśrednione wartości z Twojego opisu: po 30 tys. dla nc i pc oraz 60 tys. wyjściowo dla ex, z czego po ok. 4 tys. to części wspólne).
+
+1. Bilans liczbowy i przepływ próbek (Od surowych danych do modeli)
+
+
+Nazwa zbioru	Liczba surowych próbek	Krok 0: Czyszczenie (Deduplikacja)	Krok 1: Podział główny (50% / 50%)	Przeznaczenie w Poziomie 1 (Test metody)	Przeznaczenie w Poziomie 2 (Właściwa klasyfikacja)
+nc (klasa negatywna)	~30 000	Bez zmian (unikalne)	Połowa A: 15 000
+Połowa B: 15 000	Tylko Połowa A (15 000):
+• 12 000 → Train (80%)
+• 3 000 → Test (20%)	Tylko Połowa B (15 000):
+• 12 000 → Train (80%)
+• 3 000 → Test (20%)
+pc (klasa pozytywna)	~30 000	Bez zmian (unikalne)	Połowa A: 15 000
+Połowa B: 15 000	Tylko Połowa A (15 000):
+• 12 000 → Train (80%)
+• 3 000 → Test (20%)	Tylko Połowa B (15 000):
+• 12 000 → Train (80%)
+• 3 000 → Test (20%)
+ex (zbiór eksperymentalny)	~60 000	Usunięcie duplikatów:
+• ~4 000 wspólnych z nc (out)
+• ~4 000 wspólnych z pc (out)
+• Zostaje: ~52 000 unikalnych	Nie dzielimy na pół (całość idzie do Poziomu 2)	0 próbek (Nieużywany na tym etapie)	Wszystkie unikalne (~52 000):
+• 0 → Train
+• 0 → Test
+• ~52 000 → Predykcja (klasyfikacja na nc/pc)
+
+
+2. Podsumowanie wielkości zbiorów w obu etapach modelowania
+
+Ta tabela pokazuje, ile dokładnie danych wchodzi do algorytmu w każdym kroku uczenia maszynowego:
+
+Etap analizy	Zbiór Treningowy (Train)	Zbiór Testowy (Test - ocena jakości)	Zbiór Predykcyjny (Inferencja)	Łącznie użytych próbek w etapie
+POZIOM 1
+(Walidacja metody)	24 000
+(12k nc_A + 12k pc_A)	6 000
+(3k nc_A + 3k pc_A)	0	30 000 (100% Połowy A)
+POZIOM 2
+(Finalny model i klasyfikacja)	24 000
+(12k nc_B + 12k pc_B)	6 000
+(3k nc_B + 3k pc_B)	~52 000
+(oczyszczony zbiór ex)	~82 000 (100% Połowy B + czyste ex)
+
+
+3. Co dzieje się z usuniętymi duplikatami ze zbioru ex? (~8 000 próbek)
+
+Zamiast wyrzucać je całkowicie do kosza, możesz wykorzystać je w tabeli wyników jako dodatkowy dowód wiarygodności:
+
+Zbiór pomocniczy	Liczba próbek	Jak go wykorzystać?
+ex wspólne z nc i pc	~8 000	Zbiór kontrolny (Gold Standard): Przepuszczasz je przez model z Poziomu 2 (jako predykcję) i sprawdzasz, czy model poprawnie przypisał im etykiety nc i pc, które już wcześniej znałeś.
+
+Jeśli chcesz, mogę wygenerować gotowy szablon kodu w Pythonie (pandas / scikit-learn), który wykona dokładnie taki podział z zapisem do osobnych plików CSV/Parquet, gwarantując brak wycieku danych. Daj znać, w jakim formacie przechowujesz dane i po jakiej kolumnie (ID) identyfikujesz duplikaty.
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+prawie dobrze, tylko "nc" to klasa pozytywna, 
+przy czym wewnątrz klasy nc mam jeszcze klasę lnc i to jest ostatecznie (w tym drugim etapie - ja go nazywam "ml" a pierwszy etap "cp") i to jrest ostatecznie klasa pozytywna. Tylko problem polega na tym, że trudno jest przewidzieć ile będzie tych lnc wewnątrz "nc" i nie wiem nigdy, czy mi starczy ich na train i test. Najlepiej byłoby wydzielić je (te "lnc") na samym początku, żeby na koniec je mieć w odpowiedniej liczbie, ale z drugiej strony też dobrze, jak w pierwszym etapie klasa "nc" zawiera "lnc", ponieważ jest wterdy bardziej naturalnie. Popraw tabele i daj pomysł jak to rozwiązać?
+
+To bardzo ważny szczegół (brzmi jak bioinformatyka, np. non-coding RNA / lncRNA vs protein-coding pc!). Zjawisko, w którym podklasa (lnc) znajduje się wewnątrz szerszej klasy (nc), a jednocześnie zależy Ci na naturalnych proporcjach w etapie cp i odpowiedniej liczbie próbek w etapie ml, rozwiązuje się za pomocą podziału warstwowego (stratyfikowanego) opartego na podklasach.
+
+Jak rozwiązać problem braku próbek lnc na koniec? (Metoda Stratyfikacji Zagnieżdżonej)
+
+Zamiast dzielić nc w ciemno na pół, dzielisz nc osobno na dwie podgrupy przed podziałem 50/50:
+1. Podgrupa lnc (te próbki wewnątrz nc, które mają etykietę lnc).
+2. Podgrupa nc_inne (reszta zbioru nc, która nie jest lnc).
+Następnie każdą z tych podgrup dzielisz dokładnie na 50% (Połowa A → cp) i 50% (Połowa B → ml).
+Co dzięki temu zyskujesz?
+• W etapie cp (Połowa A): Składasz z powrotem lnc_A + nc_inne_A w jeden worek nc_A. Zachowujesz w 100% naturalną proporcję lnc wewnątrz nc (dokładnie taką, jaka występuje w naturze/surowych danych).
+• W etapie ml (Połowa B): Masz gwarancję, że do tego etapu trafi dokładnie połowa wszystkich dostępnych próbek lnc (np. jeśli masz ich łącznie 2 000, to w ml masz pewne 1 000 próbek, z czego 800 idzie na Train, a 200 na Test). Zero ryzyka, że wylosują się nierówno.
+(Uwaga: jeśli próbek lnc jest bardzo mało, np. poniżej 500 w całym zbiorze, w Kroku 1 możesz zamiast 50/50 zrobić podział asymetryczny tylko dla lnc, np. 30% do cp i 70% do ml, ale przy 50/50 zachowujesz pełną naturalność rozkładu).
+
+1. Poprawiony bilans liczbowy i przepływ próbek (cp oraz ml)
+
+Założenia do tabeli: nc (30k) składa się np. z 26k nc_inne oraz 4k lnc. Klasa pc (30k) to klasa negatywna.
+
+Nazwa zbioru / Podklasy	Rola w analizie	Krok 0: Czyszczenie (Deduplikacja)	Krok 1: Stratyfikowany podział główny (50% / 50%)	Etap 1: cp (Klasyfikacja: nc [poz.] vs pc [neg.])	Etap 2: ml (Klasyfikacja: lnc [poz.] vs reszta [neg.])
+nc → podklasa lnc
+(np. ~4 000)	Docelowa klasa pozytywna w ml (część nc w cp)	Bez zmian (unikalne)	Połowa A (lnc_A): 2 000
+Połowa B (lnc_B): 2 000	Wchodzi w skład nc_A (łączymy z nc_inne_A):
+• 1 600 → Train
+• 400 → Test	Klasa POZYTYWNA w ml (2 000):
+• 1 600 → Train (80%)
+• 400 → Test (20%)
+nc → podklasa nc_inne
+(np. ~26 000)	Część klasy pozytywnej w cp; w ml klasa negatywna (lub odrzucona)*	Bez zmian (unikalne)	Połowa A (nc_inne_A): 13 000
+Połowa B (nc_inne_B): 13 000	Wchodzi w skład nc_A (łączymy z lnc_A):
+• 10 400 → Train
+• 2 600 → Test	Wchodzi w skład klasy NEGATYWNEJ (razem z pc_B):
+• 10 400 → Train (80%)
+• 2 600 → Test (20%)
+pc
+(~30 000)	Klasa negatywna w obu etapach	Bez zmian (unikalne)	Połowa A (pc_A): 15 000
+Połowa B (pc_B): 15 000	Klasa NEGATYWNA w cp (15 000):
+• 12 000 → Train (80%)
+• 3 000 → Test (20%)	Wchodzi w skład klasy NEGATYWNEJ (razem z nc_inne_B):
+• 12 000 → Train (80%)
+• 3 000 → Test (20%)
+ex
+(~60 000)	Zbiór eksperymentalny do predykcji	Usunięcie duplikatów wspólnych z nc (w tym lnc) oraz pc.
+(Zostaje np. ~52 000)	Nie dzielimy na pół (całość idzie do ml)	0 próbek (Nieużywany w etapie cp)	Zbiór inferencyjny (~52 000):
+• 0 → Train / Test
+• ~52 000 → Predykcja (szukamy nowych lnc)
+
+*Uwaga do nc_inne_B w etapie ml: Jeśli w etapie ml chcesz odróżniać lnc od wszystkiego innego (zarówno od pc, jak i od innych nc), to nc_inne_B łączysz z pc_B jako klasę negatywną. Jeśli natomiast w etapie ml interesuje Cię tylko lnc vs pc, to nc_inne_B po prostu pomijasz w treningu ml.
+
+2. Podsumowanie wielkości zbiorów w etapach cp oraz ml
+
+
+Etap analizy	Definicja klas w modelu	Zbiór Treningowy (Train 80%)	Zbiór Testowy (Test 20%)	Zbiór Predykcyjny (Inferencja)
+Etap 1: cp
+(Walidacja metody)	Poz (1): całe nc_A (lnc_A + nc_inne_A)
+Neg (0): pc_A	24 000
+• Poz (nc_A): 12 000
+• Neg (pc_A): 12 000	6 000
+• Poz (nc_A): 3 000
+• Neg (pc_A): 3 000	0
+Etap 2: ml
+(Finalny model)	Poz (1): tylko lnc_B
+Neg (0): pc_B + nc_inne_B	24 000
+• Poz (lnc_B): 1 600
+• Neg (pc_B + nc_inne_B): 22 400	6 000
+• Poz (lnc_B): 400
+• Neg (pc_B + nc_inne_B): 5 600	~52 000
+(oczyszczony zbiór ex)
+
+
+Ważna wskazówka metodologiczna do etapu ml
+
+Zwróć uwagę na tabelę nr 2 w wierszu Etap 2: ml:
+Jeśli lnc stanowi mniejszość wewnątrz nc (np. 4 000 z 30 000), to w etapie ml będziesz miał niezbalansowane klasy (np. 1 600 pozytywnych vs 22 400 negatywnych).
+• Nie zmieniaj tego w zbiorze Testowym (20%) – zbiór testowy musi zachować naturalne proporcje, żeby wyniki w artykule były wiarygodne (użyj tam metryk PR-AUC oraz F1-score, bo zwykłe Accuracy będzie przekłamane).
+• W zbiorze Treningowym (80%) możesz zastosować wagi klas (np. class_weight='balanced' w scikit-learn/XGBoost) lub undersampling klasy negatywnej, aby model dobrze nauczył się rozpoznawać rzadką klasę lnc.
+Daj znać:
+• Ile mniej więcej jest próbek lnc w całym zbiorze nc (czy to kilka tysięcy, czy raczej kilkaset)?
+• Czy w etapie ml klasą negatywną ma być wszystko co nie jest lnc (pc + nc_inne), czy tylko samo pc?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+no dobra, odgadłeś jakie analizy robię, więc teraz konkretnie. Mam dane transkryptomiczne z analizy RNA-seq. Aktualnie teraz analizuję transkryptom muszy, ale będę analizował różne. głównym moim celem jest identyfikacja lncRNA, ale z bardzo dużą skutecznością. Zajmuję się tym od 10 lat wiec mam doświadczenie. Na początek do analiz biorę z bazy danych pliki nc.fasta i cds.fasta oraz mam merged_stranscriptome.fasta z mapowania z etaui stringtie (o ile dobrze pamietam) i to jest ta próba eksperymentalna, więc nazywa się ex. W niej są i znane pc i znane nc i lnc oraz sporo transkryptów nieznanych. Opracowałem 2 eatapową metodę identyfikacji: cp - analiza potencjalów kodowania różnymi narzędziami i potem drugi etap ml - machine learcning wyciąganie najlepszego konsensusu i klasyfikacja na podstawie danych z pierwszego etapu i wybranych właściwości / cech transkryptów (długość, ilość eksonów, posiadanie ogona polyA itp.. ). Na oby tych etapach muszę zrobić trening, test i identyfikację na tych niezaadnotowanych transkryptach z ex. Mam już wszystko zrobione i potrzebuje podzielic dane na grupy, przy czym teraz analizuję mysz (i jest prosto), zaraz będę analizował kilka innych modelowych organizmów, ale już czekają niemodelowe i tam będzie trudniej. Chcę opracować sposób dzielenia prób tak, żeby był uniwersalny. Opisz mi teraz jeszcze raz całosć jak to zrobić najlepiej? Może też wiesz jakie ilości danych wystarczają do trenowania i testowania? Może warto sprawdzić na początek ile mam danej klasy i nie dzielić na procenty, tylko wybrać np. 1500 lncRNA i to starczy? Zrób jeszcze raz.
+
+To zmienia postać rzeczy i daje pełny obraz sytuacji. W transkryptomice i identyfikacji lncRNA (szczególnie gdy przechodzisz z myszy na organizmy niemodelowe, gdzie adnotacje są ubogie i często zaszumione) uniwersalny pipeline podziału danych musi spełniać dwa warunki: uniemożliwiać wyciek danych między izoformami/sekwencjami oraz radzić sobie ze zmienną liczbą znanych lncRNA w zależności od gatunku.
+Poniżej masz gotową, uniwersalną architekturę podziału danych (tzw. Stacking / Two-Stage Pipeline), zaprojektowaną specjalnie pod Twoje narzędzia (cp \(\rightarrow \) ml \(\rightarrow \) ex), wraz z konkretnymi progami liczbowymi.
+
+1. Krok 0: Przygotowanie i deduplikacja (Zanim zrobisz jakikolwiek podział)
+
+W plikach z StringTie (merged_transcriptome.fasta = ex) oraz bazach referencyjnych (nc.fasta, cds.fasta) masz izoformy i transkrypty o różnym stopniu pokrycia. Zwykłe porównanie po ID nie wystarczy.
+1. Wykluczenie znanych transkryptów z ex:
+	• Użyj GffCompare (porównując merged.gtf z referencyjnym GTF) lub BLASTn / CD-HIT-EST-2D (np. 95% identyczności i pokrycia sekwencji), aby wyczyścić ex ze wszystkich sekwencji obecnych w cds.fasta oraz nc.fasta.
+	• Ważne: Zbiór ex po tym kroku zawiera wyłącznie nowe, niezaadnotowane transkrypty (klasy u, i, x, o z GffCompare). To jest Twój czysty zbiór do odkryć (discovery set).
+2. Wydzielenie lnc z nc.fasta:
+	• Z pliku nc.fasta odfiltruj znane lncRNA (np. po biotypie lncRNA / długości > 200 nt i braku krótkich ncRNA jak miRNA, snoRNA, tRNA). Masz teraz trzy czyste pule referencyjne:
+		• cds (klasa negatywna: kodujące białka)
+		• lnc (klasa pozytywna: długie niekodujące)
+		• snc / nc_other (pozostałe niekodujące – warto je zachować lub świadomie odrzucić w zależności od tego, czy filtrujesz długość >200 nt na wejściu; standardowo w lncRNA pipeline'ach odrzuca się transkrypty <200 nt na samym starcie).
+3. Kluczowa pułapka w transkryptomice – podział na poziomie GENU, nie transkryptu:
+	• Jeśli z jednego genu masz 5 izoform i 3 trafią do Train, a 2 do Test, model nauczy się sekwencji tego genu i zawyży wyniki (szczególnie u myszy, gdzie jest dużo izoform). Grupuj po gene_id (lub klastrach CD-HIT-EST na 80–90% podobieństwa) przed podziałem na Train i Test.
+
+2. Ile próbek wystarczy? (Zamiast sztywnych procentów: reguła progowa)
+
+Twoja intuicja ze stałą liczbą próbek (np. 1500 lncRNA) jest bardzo słuszna. W bioinformatyce algorytmy oparte na cechach sekwencyjnych i strukturalnych (XGBoost, Random Forest, LightGBM – zakładam, że używasz czegoś takiego w etapie ml łącząc wyniki CPC2, CPAT, PLEK, FEELnc itp. + długość, liczba eksonów, polyA) wysycają się dość szybko.
+
+Minimalne i optymalne liczby próbek (dla organizmów modelowych i niemodelowych):
+
+• Minimum absolutne (organizmy niemodelowe): 500–800 unikalnych genów lnc (wtedy dzielisz 80/20: ~400–640 Train, ~100–160 Test). Przy mniejszej liczbie lepiej użyć 5-krotnej walidacji krzyżowej (5-fold CV) zamiast sztywnego podziału 80/20, żeby nie tracić danych.
+• Złoty standard / punkt wysycenia (mysz, człowiek, ryba): 1 500 – 2 500 unikalnych genów lnc na etap. Powyżej ~3 000 próbek przyrost jakości na cechach tabelarycznych (wyniki z cp + długość + eksony) jest już marginalny (rzędu 0.1–0.3% AUC), a zyskujesz tylko na czasie obliczeń.
+• Balans klas (lnc vs cds): W treningu najlepiej utrzymywać proporcję 1:1 lub 1:2 (np. 2000 lnc i 2000–4000 cds). Natomiast w zbiorze testowym (20%) możesz zachować proporcję naturalną lub również 1:1 (wtedy wyraźnie piszesz w pracy, że ewaluacja była na zbalansowanym zbiorze testowym).
+
+3. Uniwersalny schemat podziału (Schemat Hybrydowy: Stały Budżet Próbek)
+
+Ponieważ w etapie ml używasz wyników z etapu cp jako cech wejściowych (meta-cech), nie możesz trenować cp i ml na tych samych danych (bo narzędzia z cp będą miały sztucznie zawyżoną skuteczność na własnym zbiorze treningowym, co oszuka klasyfikator ml!).
+Rozwiązaniem jest podział na dwa niezależne bloki (Blok CP i Blok ML) z limitem próbek (tzw. cap na poziomie np. 2 500 próbek na blok).
+
+Tabela przepływu danych (Uniwersalna dla myszy i organizmów niemodelowych)
+
+
+Krok / Zbiór	Mysz (dużo danych: ~15k lnc, ~22k cds)	Organizm niemodelowy (mało danych: np. ~1.2k lnc, ~15k cds)	Rola w pipeline'ie
+Krok 0: Czyszczenie	• Odrzucenie <200 nt
+• Klasteryzacja po gene_id
+• Usunięcie znanych z ex	• Odrzucenie <200 nt
+• Klasteryzacja po gene_id / CD-HIT
+• Usunięcie znanych z ex	Zapobieganie wyciekowi izoform i duplikatów między zbiorami.
+Blok 1: Etap cp
+(Kalibracja i dobór progów narzędzi kodujących)	Limit: 2 500 lnc + 2 500 cds
+• 2 000 + 2 000 → Train cp (80%)
+• 500 + 500 → Test cp (20%)	50% dostępnych lnc (600) + 600 cds
+• 480 + 480 → Train cp (80%)
+• 120 + 120 → Test cp (20%)	Trenowanie modeli cp (np. własny model CPAT/PLEK) i ustalenie progów odcięcia (cut-offs).
+Blok 2: Etap ml
+(Meta-klasyfikator: wyniki cp + długość, eksony, polyA)	Limit: 2 500 lnc + 2 500 cds (całkowicie rozłączne z Blokiem 1!)
+• 2 000 + 2 000 → Train ml (80%)
+• 500 + 500 → Test ml (20%)	Drugie 50% dostępnych lnc (600) + 600 cds (rozłączne z Blokiem 1!)
+• 480 + 480 → Train ml (80%)
+• 120 + 120 → Test ml (20%)	Przepuszczasz Blok 2 przez wytrenowany cp, doklejasz cechy strukturalne (eksony, polyA) i uczysz finalny model ml.
+Zbiór ex (StringTie)
+(Niezaadnotowane transkrypty)	100% oczyszczonego ex (np. 30 000 transkryptów)	100% oczyszczonego ex (np. 45 000 transkryptów)	Przepuszczasz ex przez cp \(\rightarrow \) wyciągasz cechy \(\rightarrow \) klasyfikujesz modelem ml (wybierasz te z wysokim prawdopodobieństwem lnc).
+
+
+Dlaczego ten schemat zadziała idealnie w Twojej pracy?
+
+1. Co robisz z nadmiarem danych u myszy?
+	• Jeśli mysz ma 15 000 znanych lnc, a Ty weźmiesz 2 500 do cp i 2 500 do ml, zostaje Ci 10 000 nieużytych znanych lnc (oraz odpowiednia pula cds). Możesz ich użyć jako trzeciego, niezależnego zbioru walidacyjnego (External Benchmark), żeby pokazać recenzentom skuteczność całego dwuetapowego pipeline'u na ogromnej próbie.
+2. Co jeśli w organizmie niemodelowym masz za mało lnc na podział 50/50 między cp a ml (np. w bazie jest tylko 300 znanych lnc)?
+	• Wtedy używasz tzw. Out-of-Fold (OOF) predictions: nie dzielisz danych na Blok 1 i Blok 2. Robisz jedną wspólną pulę (np. 300 lnc + 600 cds) i dzielisz ją w 5-krotnej walidacji krzyżowej (5-fold CV). Narzędzia cp trenowane na 4/5 danych robią predykcję na pozostałej 1/5. Dzięki temu każdy transkrypt dostaje uczciwą predykcję cp (bez wycieku danych), na której potem uczy się model ml.
+	• Uwaga: Jeśli w etapie cp używasz wyłącznie gotowych, pretrenowanych modeli (np. standardowego CPC2, LncFinder bez własnego retreningu), to nie potrzebujesz Bloku 1 do treningu cp – całą dostępną pulę lnc i cds (np. do limitu 3 000 na klasę) przeznaczasz od razu na Blok 2 (ml 80% Train / 20% Test).
+Daj znać, czy w etapie cp:
+• Trenujesz narzędzia od zera na swoich danych (np. budujesz własne modele HEXAMER/logit dla CPAT/PLEK dla każdego gatunku), czy używasz gotowych, pretrenowanych modeli?
+• Używasz na wejściu pliku GTF (bo wspomniałeś o liczbie eksonów), czy tylko plików FASTA?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+z izoformami jest taki problem, że spora część lncRNA to izoformy genów kodujących białka, dlatego analizujemy je na poziomie transkryptów, a nie genów i na razie dozwalamy występowanie izoformów , muszę to przemyśleć. 
+Mam też kod w R do podziału prób - wyślę Tobie i chciałbym, żebyś pomógł mi go poprawić.
+
+Świetnie, wyślij kod w R – sprawdzę go pod kątem logicznym, poprawię ewentualne pułapki wycieku danych i dostosuję do Twojego dwuetapowego pipeline'u (cp → ml → ex).
+Twoja uwaga o izoformach jest jak najbardziej słuszna w biologii – tzw. processed transcripts lub retained intron często pochodzą z locus genu kodującego białko (protein_coding gene), więc twarde grupowanie po gene_id mogłoby wyciąć cenne biologicznie przypadki (np. alternatywny splicing zmieniający potencjał kodujący). Skoro na tym etapie świadomie analizujesz dane na poziomie pojedynczych transkryptów, kluczowe będzie dopilnowanie w kodzie R, aby:
+1. Żaden dokładny duplikat sekwencji (lub identyczny identyfikator transkryptu) nie przeniknął między zbiorami.
+2. Zbiór ex został całkowicie oczyszczony z transkryptów obecnych w zbiorach referencyjnych (nc oraz cds).
+3. Podział na cp oraz ml zachowywał odpowiedni budżet próbek (zarówno dla bogatej w dane myszy, jak i uboższych organizmów niemodelowych).
+Wklej swój skrypt w R (może być w całości lub kluczowy fragment odpowiedzialny za wczytywanie, filtrowanie i podział).
+Wklej kod w R i krótko dopisz:
+• Jak wyglądają nagłówki (ID) w Twoich plikach FASTA (nc.fasta, cds.fasta, ex), żebyśmy wiedzieli, po czym najlepiej parować i usuwać duplikaty (po ID czy po samej sekwencji)?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+library(Biostrings)
+
+prepare_data <- function(cds_file,
+                         nc_file,
+                         prefix,
+                         seed          = 123,
+                         stage_prop    = 0.5,
+                         stage_method  = "exact",  # "exact", "sample", "rep"
+                         tt_prop       = 0.8,
+                         tt_method     = "exact",  # "exact", "sample", "rep"
+                         balance_train = FALSE) {
+
+  set.seed(seed)
+
+  # 1. Wczytanie FASTA i zmiana nazw
+  cds <- readDNAStringSet(cds_file)
+  nc  <- readDNAStringSet(nc_file)
+
+  cds_new <- paste(prefix, "cds", sprintf("%07d", seq_along(cds)), sep = "_")
+  nc_new  <- paste(prefix, "nc",  sprintf("%07d", seq_along(nc)),  sep = "_")
+
+  df <- data.frame(
+    ID       = c(cds_new, nc_new),
+    old_name = c(names(cds), names(nc)),
+    class    = c(rep("cds", length(cds)), rep("nc", length(nc))),
+    stringsAsFactors = FALSE
+  )
+
+  names(cds) <- cds_new
+  names(nc)  <- nc_new
+  all_seqs   <- c(cds, nc)
+
+  # Pomocniczy podział
+  split_vec <- function(n, labels, prop, method) {
+    if (method == "rep") {
+      rep(labels, length.out = n)
+    } else if (method == "sample") {
+      sample(labels, size = n, replace = TRUE, prob = c(prop, 1 - prop))
+    } else {
+      n1 <- round(n * prop)
+      sample(c(rep(labels[1], n1), rep(labels[2], n - n1)))
+    }
+  }
+
+  # 2. Podział 50/50 (ml vs cp) osobno dla cds i nc
+  df$stage <- ave(df$class, df$class, FUN = function(x) {
+    split_vec(length(x), c("ml", "cp"), stage_prop, stage_method)
+  })
+
+  # 3. Podział 80/20 (train vs test) wewnątrz każdej grupy (class + stage)
+  grp <- paste(df$class, df$stage, sep = "_")
+  df$tt_set <- ave(grp, grp, FUN = function(x) {
+    split_vec(length(x), c("train", "test"), tt_prop, tt_method)
+  })
+
+  df$cohort <- paste(df$class, df$stage, df$tt_set, sep = "_")
+  df$keep   <- TRUE
+
+  # 4. Opcjonalne wyrównanie klas 1:1 w zbiorach train
+  if (balance_train) {
+    for (st in c("ml", "cp")) {
+      idx_cds <- which(df$stage == st & df$tt_set == "train" & df$class == "cds")
+      idx_nc  <- which(df$stage == st & df$tt_set == "train" & df$class == "nc")
+      n_min   <- min(length(idx_cds), length(idx_nc))
+
+      if (length(idx_cds) > n_min) {
+        drop <- idx_cds[sample.int(length(idx_cds), length(idx_cds) - n_min)]
+        df$keep[drop] <- FALSE
+      }
+      if (length(idx_nc) > n_min) {
+        drop <- idx_nc[sample.int(length(idx_nc), length(idx_nc) - n_min)]
+        df$keep[drop] <- FALSE
+      }
+    }
+  }
+
+  return(list(seqs = all_seqs, legend = df))
+}
+
+wynik <- prepare_data(
+  cds_file      = "Mus_musculus.GRCm39.cds.all.fa.gz",
+  nc_file       = "Mus_musculus.GRCm39.ncrna.fa.gz",
+  prefix        = "Mus",
+  seed          = 123,
+  stage_prop    = 0.5,
+  stage_method  = "exact",
+  tt_prop       = 0.8,
+  tt_method     = "exact",
+  balance_train = TRUE
+)
+
+seqs <- wynik$seqs
+df   <- wynik$legend
+
+# Jedna kohorta (z uwzględnieniem balansowania: & df$keep)
+cds_ml_test <- seqs[names(seqs) %in% df[df$cohort %in% "cds_ml_test" & df$keep, ]$ID]
+
+# Kilka kohort naraz (np. cały zbiór pod ML)
+ml_all <- seqs[names(seqs) %in% df[df$cohort %in% c("cds_ml_test", "cds_ml_train", "nc_ml_test", "nc_ml_train") & df$keep, ]$ID]
+
+# Ręczny zapis na dysk tego, czego akurat potrzebujesz
+# writeXStringSet(ml_all, "Mus_ml_all.fa.gz", compress = TRUE)
+# write.table(df, "OldNewNamesLegend_Mus.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+# 1. Czy jakieś ID trafiło jednocześnie do ml i cp? (musi wyjść 0)
+length(intersect(df$ID[df$stage == "ml"], df$ID[df$stage == "cp"]))
+
+# 2. Czy jakaś oryginalna nazwa z wejściowego FASTA powtarza się między ml i cp? (musi wyjść 0)
+length(intersect(df$old_name[df$stage == "ml"], df$old_name[df$stage == "cp"]))
+
+# 3. Podgląd pierwszych ID – zobaczysz różne numery sekwencji
+head(df$ID[df$cohort == "cds_cp_test"])
+head(df$ID[df$cohort == "cds_ml_test"])
+
+# 4. Test bezpośrednio na zapisanych plikach .fa.gz (podmień prefix, jeśli inny niż Mus_seq)
+cp_fa <- readDNAStringSet("Mus_seq_cds_cp_test.fa.gz")
+ml_fa <- readDNAStringSet("Mus_seq_cds_ml_test.fa.gz")
+length(intersect(names(cp_fa), names(ml_fa)))
+
+# /////////////////////////////////////////////////////////////////////////
+# Testowanie liczebności i proporcji grup
+# /////////////////////////////////////////////////////////////////////////
+
+df     <- wynik$legend
+df_exp <- df[df$exported, ]  # tylko sekwencje zapisane do plików FASTA (po balansowaniu)
+
+# 1. Liczebność kohort (wszystkie vs wyeksportowane)
+table(df$cohort)
+table(df_exp$cohort)
+
+# 2. Udział procentowy każdej kombinacji w całej tabeli (w %)
+round(prop.table(table(df$cohort)) * 100, 2)
+round(prop.table(table(df_exp$cohort)) * 100, 2)
+
+# 3. Sprawdzenie podziału stage (ml/cp) wewnątrz każdej klasy (w %)
+round(prop.table(table(df$class, df$stage), margin = 1) * 100, 2)
+
+# 4. Sprawdzenie proporcji train/test wewnątrz każdej kombinacji class + stage (w %)
+round(prop.table(table(paste(df$class, df$stage, sep = "_"), df$tt_set), margin = 1) * 100, 2)
+
+# 5. Sprawdzenie balansu klas (cds vs nc) w finalnych zbiorach wyeksportowanych do FASTA
+table(paste(df_exp$stage, df_exp$tt_set, sep = "_"), df_exp$class)
+round(prop.table(table(paste(df_exp$stage, df_exp$tt_set, sep = "_"), df_exp$class), margin = 1) * 100, 2)
+
+# 6. Liczba sekwencji odrzuconych przy balansowaniu (FALSE) vs zachowanych (TRUE)
+table(df$cohort, df$exported)
+
+# 7. Kontrola spójności: brak zduplikowanych ID i zgodność sumy sekwencji
+any(duplicated(df$ID))
+nrow(df) == length(wynik$seqs)
+
+library(Biostrings)
+
+prepare_data <- function(cds_file,
+ nc_file,
+ prefix,
+ seed = 123,
+ stage_prop = 0.5,
+ stage_method = "exact", # "exact", "sample", "rep"
+ tt_prop = 0.8,
+ tt_method = "exact", # "exact", "sample", "rep"
+ balance_train = FALSE) {
+
+ set.seed(seed)
+
+ # 1. Wczytanie FASTA i zmiana nazw
+ cds <- readDNAStringSet(cds_file)
+ nc <- readDNAStringSet(nc_file)
+
+ cds_new <- paste(prefix, "cds", sprintf("%07d", seq_along(cds)), sep = "_")
+ nc_new <- paste(prefix, "nc", sprintf("%07d", seq_along(nc)), sep = "_")
+
+ df <- data.frame(
+ ID = c(cds_new, nc_new),
+ old_name = c(names(cds), names(nc)),
+ class = c(rep("cds", length(cds)), rep("nc", length(nc))),
+ stringsAsFactors = FALSE
+ )
+
+ names(cds) <- cds_new
+ names(nc) <- nc_new
+ all_seqs <- c(cds, nc)
+
+ # Pomocniczy podział
+ split_vec <- function(n, labels, prop, method) {
+ if (method == "rep") {
+ rep(labels, length.out = n)
+ } else if (method == "sample") {
+ sample(labels, size = n, replace = TRUE, prob = c(prop, 1 - prop))
+ } else {
+ n1 <- round(n * prop)
+ sample(c(rep(labels[1], n1), rep(labels[2], n - n1)))
+ }
+ }
+
+ # 2. Podział 50/50 (ml vs cp) osobno dla cds i nc
+ df$stage <- ave(df$class, df$class, FUN = function(x) {
+ split_vec(length(x), c("ml", "cp"), stage_prop, stage_method)
+ })
+
+ # 3. Podział 80/20 (train vs test) wewnątrz każdej grupy (class + stage)
+ grp <- paste(df$class, df$stage, sep = "_")
+ df$tt_set <- ave(grp, grp, FUN = function(x) {
+ split_vec(length(x), c("train", "test"), tt_prop, tt_method)
+ })
+
+ df$cohort <- paste(df$class, df$stage, df$tt_set, sep = "_")
+ df$keep <- TRUE
+
+ # 4. Opcjonalne wyrównanie klas 1:1 w zbiorach train
+ if (balance_train) {
+ for (st in c("ml", "cp")) {
+ idx_cds <- which(df$stage == st & df$tt_set == "train" & df$class == "cds")
+ idx_nc <- which(df$stage == st & df$tt_set == "train" & df$class == "nc")
+ n_min <- min(length(idx_cds), length(idx_nc))
+
+ if (length(idx_cds) > n_min) {
+ drop <- idx_cds[sample.int(length(idx_cds), length(idx_cds) - n_min)]
+ df$keep[drop] <- FALSE
+ }
+ if (length(idx_nc) > n_min) {
+ drop <- idx_nc[sample.int(length(idx_nc), length(idx_nc) - n_min)]
+ df$keep[drop] <- FALSE
+ }
+ }
+ }
+
+ return(list(seqs = all_seqs, legend = df))
+}
+
+wynik <- prepare_data(
+ cds_file = "Mus_musculus.GRCm39.cds.all.fa.gz",
+ nc_file = "Mus_musculus.GRCm39.ncrna.fa.gz",
+ prefix = "Mus",
+ seed = 123,
+ stage_prop = 0.5,
+ stage_method = "exact",
+ tt_prop = 0.8,
+ tt_method = "exact",
+ balance_train = TRUE
+)
+
+seqs <- wynik$seqs
+df <- wynik$legend
+
+# Jedna kohorta (z uwzględnieniem balansowania: & df$keep)
+cds_ml_test <- seqs[names(seqs) %in% df[df$cohort %in% "cds_ml_test" & df$keep, ]$ID]
+
+# Kilka kohort naraz (np. cały zbiór pod ML)
+ml_all <- seqs[names(seqs) %in% df[df$cohort %in% c("cds_ml_test", "cds_ml_train", "nc_ml_test", "nc_ml_train") & df$keep, ]$ID]
+
+# Ręczny zapis na dysk tego, czego akurat potrzebujesz
+# writeXStringSet(ml_all, "Mus_ml_all.fa.gz", compress = TRUE)
+# write.table(df, "OldNewNamesLegend_Mus.tsv", sep = "\t", row.names = FALSE, quote = FALSE)
+
+# 1. Czy jakieś ID trafiło jednocześnie do ml i cp? (musi wyjść 0)
+length(intersect(df$ID[df$stage == "ml"], df$ID[df$stage == "cp"]))
+
+# 2. Czy jakaś oryginalna nazwa z wejściowego FASTA powtarza się między ml i cp? (musi wyjść 0)
+length(intersect(df$old_name[df$stage == "ml"], df$old_name[df$stage == "cp"]))
+
+# 3. Podgląd pierwszych ID – zobaczysz różne numery sekwencji
+head(df$ID[df$cohort == "cds_cp_test"])
+head(df$ID[df$cohort == "cds_ml_test"])
+
+# 4. Test bezpośrednio na zapisanych plikach .fa.gz (podmień prefix, jeśli inny niż Mus_seq)
+cp_fa <- readDNAStringSet("Mus_seq_cds_cp_test.fa.gz")
+ml_fa <- readDNAStringSet("Mus_seq_cds_ml_test.fa.gz")
+length(intersect(names(cp_fa), names(ml_fa)))
+
+# /////////////////////////////////////////////////////////////////////////
+# Testowanie liczebności i proporcji grup
+# /////////////////////////////////////////////////////////////////////////
+
+df <- wynik$legend
+df_exp <- df[df$exported, ] # tylko sekwencje zapisane do plików FASTA (po balansowaniu)
+
+# 1. Liczebność kohort (wszystkie vs wyeksportowane)
+table(df$cohort)
+table(df_exp$cohort)
+
+# 2. Udział procentowy każdej kombinacji w całej tabeli (w %)
+round(prop.table(table(df$cohort)) * 100, 2)
+round(prop.table(table(df_exp$cohort)) * 100, 2)
+
+# 3. Sprawdzenie podziału stage (ml/cp) wewnątrz każdej klasy (w %)
+round(prop.table(table(df$class, df$stage), margin = 1) * 100, 2)
+
+# 4. Sprawdzenie proporcji train/test wewnątrz każdej kombinacji class + stage (w %)
+round(prop.table(table(paste(df$class, df$stage, sep = "_"), df$tt_set), margin = 1) * 100, 2)
+
+# 5. Sprawdzenie balansu klas (cds vs nc) w finalnych zbiorach wyeksportowanych do FASTA
+table(paste(df_exp$stage, df_exp$tt_set, sep = "_"), df_exp$class)
+round(prop.table(table(paste(df_exp$stage, df_exp$tt_set, sep = "_"), df_exp$class), margin = 1) * 100, 2)
+
+# 6. Liczba sekwencji odrzuconych przy balansowaniu (FALSE) vs zachowanych (TRUE)
+table(df$cohort, df$exported)
+
+# 7. Kontrola spójności: brak zduplikowanych ID i zgodność sumy sekwencji
+any(duplicated(df$ID))
+nrow(df) == length(wynik$seqs)
+Twój kod jest napisany bardzo czysto, modularnie i widać, że zadbałeś już o podstawową weryfikację spójności. W kontekście plików z Ensembl (Mus_musculus.GRCm39.cds.all.fa.gz, Mus_musculus.GRCm39.ncrna.fa.gz) oraz Twoich założeń (wyodrębnienie lnc, obsługa zbioru ex ze StringTie, limity próbek i brak wycieku sekwencji) wymaga on jednak 5 kluczowych poprawek, aby wyeliminować ukryte błędy i dostosować go do pełnego pipeline'u.
+
+Co trzeba poprawić w obecnym kodzie? (Diagnoza)
+
+1. Błąd w zmiennej na dole skryptu: W funkcji używasz kolumny df$keep, a w sekcji testującej odwołujesz się do nieistniejącej kolumny df$exported (zwróci NULL i pustą ramkę danych).
+2. Brak wydzielenia lncRNA z ncrna.fa.gz: Plik Ensembl ncrna.fa.gz zawiera mnóstwo krótkich RNA (miRNA, snoRNA, snRNA, rRNA, tRNA) oraz lncRNA. Nagłówki Ensembl mają format np. >ENSMUST... ncrna ... transcript_biotype:lncRNA .... Jeśli nie wyciągniesz biotypu lncRNA przed podziałem 50/50, nie masz gwarancji, ile lncRNA trafi do etapu ml.
+3. Brak obsługi pliku ex (merged_transcriptome.fasta) i deduplikacji po sekwencji: W Ensembl (a szczególnie w StringTie) różne rekordy potrafią mieć identyczną sekwencję nukleotydową, mimo innych ID. Samo sprawdzanie intersect(old_name) nie wykryje identycznych sekwencji między ex a cds/nc. Trzeba deduplikować po samej sekwencji (as.character(seqs)).
+4. Filtrowanie długości (<200 nt): Definicyjnie lncRNA mają \(\ge 200\) nt. Jeśli nie odfiltrujesz krótkich sekwencji na samym początku, zbiór nc będzie sztucznie zdominowany przez krótkie ncRNA, a model nauczy się trywialnej reguły „krótkie = niekodujące”.
+5. Brak limitu maksymalnej liczby próbek (max_per_class): Przy myszy masz dziesiątki tysięcy transkryptów, ale przy organizmach niemodelowych będzie ich znacznie mniej. Dodanie parametru limitującego (np. max 2500 próbek na klasę w danym etapie) pozwoli używać dokładnie tego samego skryptu dla myszy i dla gatunków niemodelowych.
+
+Poprawiony, uniwersalny skrypt w R (prepare_data)
+
+Poniższy kod rozwiązuje wszystkie powyższe problemy:
+• Odrzuca sekwencje < 200 nt i deduplikuje po sekwencji.
+• Wyciąga lnc z nagłówków Ensembl ncrna.fa.gz (poprzez transcript_biotype:lncRNA), tworząc 3 klasy: cds, lnc, nc_other.
+• Robi stratyfikowany podział na cp i ml (gwarantując równy podział lnc).
+• Wczytuje ex (merged_transcriptome.fasta) i usuwa z niego wszelkie sekwencje identyczne z cds lub nc (zarówno te użyte, jak i odrzucone przy balansowaniu!).
+• Pozwala ustawić limit próbek (max_n_stage) dla bogatych genomów (np. mysz).
+r
+library(Biostrings)
+
+prepare_data <- function(cds_file,
+                         nc_file,
+                         ex_file       = NULL,
+                         prefix        = "Mus",
+                         min_len       = 200,
+                         seed          = 123,
+                         stage_prop    = 0.5,    # proporcja ml vs cp
+                         tt_prop       = 0.8,    # proporcja train vs test
+                         max_n_stage   = Inf,    # np. 2500 dla myszy, Inf dla niemodelowych
+                         balance_train = TRUE,
+                         ml_neg_mode   = "cds_only") { # "cds_only" lub "cds_and_nc_other"
+
+  set.seed(seed)
+
+  # --- 1. WCZYTANIE I FILTROWANIE DŁUGOŚCI (>= 200 nt) ---
+  cds <- readDNAStringSet(cds_file)
+  nc  <- readDNAStringSet(nc_file)
+
+  cds <- cds[width(cds) >= min_len]
+  nc  <- nc[width(nc) >= min_len]
+
+  # --- 2. WYDZIELENIE BIOTYPU lncRNA Z PLIKU nc.fasta ---
+  # W Ensembl nagłówki zawierają "transcript_biotype:lncRNA" (lub "gene_biotype:lncRNA")
+  is_lnc <- grepl("transcript_biotype:lncRNA|gene_biotype:lncRNA", names(nc), ignore.case = TRUE)
+  nc_subclasses <- ifelse(is_lnc, "lnc", "nc_other")
+
+  df_ref <- data.frame(
+    old_name  = c(names(cds), names(nc)),
+    class     = c(rep("cds", length(cds)), nc_subclasses),
+    seq_char  = c(as.character(cds), as.character(nc)),
+    stringsAsFactors = FALSE
+  )
+
+  # --- 3. DEDUPLIKACJA PO SEKWENCJI (ZERO WYCIEKÓW MIĘDZY ZBIORAMI) ---
+  # Jeśli ta sama sekwencja występuje w cds i nc, usuwamy duplikat (priorytet ma cds)
+  dup_mask <- duplicated(df_ref$seq_char)
+  if (any(dup_mask)) {
+    message(sprintf("Usunięto %d duplikatów sekwencji wewnątrz referencji (cds/nc).", sum(dup_mask)))
+    df_ref <- df_ref[!dup_mask, ]
+  }
+
+  # Nadanie nowych, czystych ID
+  df_ref$ID <- paste(prefix, df_ref$class, sprintf("%07d", seq_len(nrow(df_ref))), sep = "_")
+
+  # --- 4. STRATYFIKOWANY PODZIAŁ NA ETAPY: ml vs cp ---
+  split_exact <- function(n, labels, prop) {
+    n1 <- round(n * prop)
+    sample(c(rep(labels[1], n1), rep(labels[2], n - n1)))
+  }
+
+  df_ref$stage <- ave(df_ref$class, df_ref$class, FUN = function(x) {
+    split_exact(length(x), c("ml", "cp"), stage_prop)
+  })
+
+  # --- 5. PODZIAŁ TRAIN / TEST (80/20) WEWNĄTRZ (class + stage) ---
+  grp <- paste(df_ref$class, df_ref$stage, sep = "_")
+  df_ref$tt_set <- ave(grp, grp, FUN = function(x) {
+    split_exact(length(x), c("train", "test"), tt_prop)
+  })
+
+  df_ref$cohort <- paste(df_ref$class, df_ref$stage, df_ref$tt_set, sep = "_")
+  df_ref$keep   <- TRUE
+
+  # --- 6. DEFINICJA RÓL W ETAPACH I OPCJONALNY LIMIT / BALANSOWANIE ---
+  # W etapie 'cp': klasa poz = (lnc + nc_other), klasa neg = cds
+  # W etapie 'ml': klasa poz = lnc, klasa neg = cds (lub cds + nc_other)
+  df_ref$role <- NA_character_
+  df_ref$role[df_ref$stage == "cp" & df_ref$class %in% c("lnc", "nc_other")] <- "pos"
+  df_ref$role[df_ref$stage == "cp" & df_ref$class == "cds"]                    <- "neg"
+
+  df_ref$role[df_ref$stage == "ml" & df_ref$class == "lnc"]                    <- "pos"
+  if (ml_neg_mode == "cds_only") {
+    df_ref$role[df_ref$stage == "ml" & df_ref$class == "cds"]                  <- "neg"
+    df_ref$keep[df_ref$stage == "ml" & df_ref$class == "nc_other"]             <- FALSE
+  } else {
+    df_ref$role[df_ref$stage == "ml" & df_ref$class %in% c("cds", "nc_other")] <- "neg"
+  }
+
+  # Balansowanie 1:1 oraz nakładanie limitu max_n_stage w zbiorach TRAIN
+  if (balance_train || is.finite(max_n_stage)) {
+    for (st in c("cp", "ml")) {
+      # Limit na cały etap (80% train, 20% test)
+      max_tr <- floor(max_n_stage * tt_prop)
+      max_te <- floor(max_n_stage * (1 - tt_prop))
+
+      for (tt in c("train", "test")) {
+        lim <- if (tt == "train") max_tr else max_te
+        idx_pos <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "pos" & df_ref$keep)
+        idx_neg <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "neg" & df_ref$keep)
+
+        if (tt == "train" && balance_train) {
+          target_n <- min(length(idx_pos), length(idx_neg), lim)
+        } else {
+          target_n <- min(max(length(idx_pos), length(idx_neg)), lim)
+        }
+
+        if (length(idx_pos) > target_n) {
+          drop_pos <- idx_pos[sample.int(length(idx_pos), length(idx_pos) - target_n)]
+          df_ref$keep[drop_pos] <- FALSE
+        }
+        if (length(idx_neg) > target_n) {
+          drop_neg <- idx_neg[sample.int(length(idx_neg), length(idx_neg) - target_n)]
+          df_ref$keep[drop_neg] <- FALSE
+        }
+      }
+    }
+  }
+
+  # --- 7. OBSŁUGA ZBIORU EKSPERYMENTALNEGO (ex - StringTie) ---
+  df_ex <- NULL
+  if (!is.null(ex_file)) {
+    ex <- readDNAStringSet(ex_file)
+    ex <- ex[width(ex) >= min_len]
+
+    df_ex <- data.frame(
+      old_name = names(ex),
+      class    = "ex",
+      seq_char = as.character(ex),
+      stringsAsFactors = FALSE
+    )
+
+    # Deduplikacja wewnątrz samego ex
+    df_ex <- df_ex[!duplicated(df_ex$seq_char), ]
+
+    # Usunięcie z ex WSZYSTKICH sekwencji obecnych w referencji (cds/nc)
+    in_ref <- df_ex$seq_char %in% df_ref$seq_char
+    message(sprintf("Zbiór ex: usunięto %d transkryptów identycznych z referencją (cds/nc).", sum(in_ref)))
+    df_ex <- df_ex[!in_ref, ]
+
+    df_ex$ID     <- paste(prefix, "ex", sprintf("%07d", seq_len(nrow(df_ex))), sep = "_")
+    df_ex$stage  <- "inference"
+    df_ex$tt_set <- "predict"
+    df_ex$cohort <- "ex_inference"
+    df_ex$keep   <- TRUE
+    df_ex$role   <- "unknown"
+  }
+
+  # --- 8. ZŁOŻENIE FINALNYCH OBIEKTÓW ---
+  df_all <- rbind(df_ref, df_ex)
+  all_seqs <- DNAStringSet(df_all$seq_char)
+  names(all_seqs) <- df_all$ID
+
+  # Usuwamy surową sekwencję z ramki danych, żeby tabela była lekka
+  df_all$seq_char <- NULL
+
+  return(list(seqs = all_seqs, legend = df_all))
+}
+Używaj kodu z rozwagą.
+
+Jak tego teraz używać i weryfikować (poprawione testy)
+
+Zwróć uwagę na dwa kluczowe parametry w wywołaniu poniżej:
+• max_n_stage = 2500 – dla myszy przytnie każdy etap do maks. 2500 próbek na klasę (2000 train + 500 test), a jak wrzucisz organizm niemodelowy z 800 lncRNA, weźmie wszystkie dostępne!
+• ml_neg_mode = "cds_only" – decydujesz, czy w etapie ml odróżniasz lnc tylko od cds (najczystsze podejście, ponieważ pozostałe nc_other o długości \(\ge 200\) nt w Ensembl to często processed pseudogenes lub retained introns, które potrafią mylić klasyfikator), czy od cds + nc_other.
+r
+wynik <- prepare_data(
+  cds_file      = "Mus_musculus.GRCm39.cds.all.fa.gz",
+  nc_file       = "Mus_musculus.GRCm39.ncrna.fa.gz",
+  ex_file       = "merged_transcriptome.fasta", # możesz podać NULL, jeśli testujesz tylko referencję
+  prefix        = "Mus",
+  min_len       = 200,
+  seed          = 123,
+  max_n_stage   = 2500,        # ustaw Inf, jeśli chcesz użyć 100% danych
+  balance_train = TRUE,
+  ml_neg_mode   = "cds_only"   # lub "cds_and_nc_other"
+)
+
+seqs <- wynik$seqs
+df   <- wynik$legend
+
+# --- EKSPORT ZBIORÓW DO PLIKÓW FASTA ---
+# 1. Etap CP (Train i Test)
+cp_train <- seqs[df$ID[df$stage == "cp" & df$tt_set == "train" & df$keep]]
+cp_test  <- seqs[df$ID[df$stage == "cp" & df$tt_set == "test"  & df$keep]]
+
+# 2. Etap ML (Train i Test)
+ml_train <- seqs[df$ID[df$stage == "ml" & df$tt_set == "train" & df$keep]]
+ml_test  <- seqs[df$ID[df$stage == "ml" & df$tt_set == "test"  & df$keep]]
+
+# 3. Zbiór EX do klasyfikacji
+ex_pred  <- seqs[df$ID[df$stage == "inference" & df$keep]]
+
+# --- TESTY SPÓJNOŚCI (POPRAWIONE) ---
+df_keep <- df[df$keep, ]
+
+# 1. Liczebność w podziale na etap, zbiór (train/test) i rolę (pos/neg)
+table(paste(df_keep$stage, df_keep$tt_set, sep = "_"), df_keep$role)
+
+# 2. Dokładny rozkład podklas (cds, lnc, nc_other, ex)
+table(df_keep$cohort, df_keep$class)
+
+# 3. Weryfikacja braku wycieku danych (musi wyjść 0)
+length(intersect(names(cp_train), names(ml_train)))
+length(intersect(as.character(cp_train), as.character(ml_test)))
+length(intersect(as.character(ml_train), as.character(ex_pred)))
+Używaj kodu z rozwagą.
+
+Jedna ważna uwaga o ex i StringTie
+
+Deduplikacja po identycznej sekwencji (df_ex$seq_char %in% df_ref$seq_char) wytnie z ex transkrypty złożone ze StringTie w 100% identycznie z referencją. Pamiętaj jednak, że StringTie często składa transkrypty o kilka nukleotydów dłuższe lub krótsze na końcach 5'/3' niż adnotacja Ensembl. W takich przypadkach sekwencje nie są identyczne co do znaku (100%), więc przejdą do ex_pred. To jest akurat pożądane (bo po predykcji ml i tak zazwyczaj nakładasz gffcompare na wyniki, żeby oznaczyć znane izoformy vs całkowicie nowe loci międzygenowe u / antysensowne x / intronowe i).
+Daj znać:
+• Czy Twoje pliki FASTA dla organizmów niemodelowych również pochodzą z Ensembl (mają transcript_biotype:lncRNA w nagłówku), czy z innych baz (np. NCBI RefSeq, NONCODE, GENCODE), gdzie trzeba inaczej parsować nagłówki?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+Ad. 1 - rzeczywiśie, popraw to
+Ad. 2 - no właśnie, tytlko tutaj potrzebuję podwójnej ścieżki: a - chcę wyodrębnić lncRNA , b - mam za mało lncRNA i nie chcę ich wyodrębniać (muszę to sprawdzić w skrypcie i ręcznie zadecydować czy idę ścieżką a czy b. Poza tym nie zawsze będę miał dane ENSEMBL, moga byc roznych formatow, nie przywiazuj sie do ensembl. 
+Ad. 3 - tak, jeszcze tego nie zrobilem. Jaki masz pomysł na deduplikację? Też zróbmy deduplikację jako opcję do wyboru. 
+ad. 4 - to już ja sobie zrobię. Generalnie będę robił jeszcze te parametry techniczne. Póki co teraz chcę opracować etap "dataset preparation" czyli przygotowanie zestawu danych do analiz )w skrócie podzielenie na test train)
+5
+
+Rozumiem w pełni. Skoro oddzielasz filtrowanie techniczne (długości, cechy itp.) i skupiasz się wyłącznie na czystym, uniwersalnym module dataset preparation niezależnym od formatu bazy danych (Ensembl, NCBI, NONCODE, GENCODE, własne złożenia), budujemy funkcję jako elastyczny silnik podziału.
+Oto jak rozwiązujemy Twoje wymagania w kodzie:
+1. Podwójna ścieżka dla lncRNA (extract_lnc = TRUE / FALSE) + podgląd liczebności:
+	• Zamiast przywiązywać się do nagłówków Ensembl, przekazujesz prosty wzorzec tekstowy (regex) w parametrze lnc_pattern (np. "lncRNA|long_non_coding|NONCODE" – domyślnie szuka słowa lncRNA lub lnc_rna bez względu na wielkość liter).
+	• W pierwszym kroku funkcja po prostu liczy, ile takich rekordów znalazła, i wypisuje komunikat w konsoli (np. Znaleziono 4210 rekordów pasujących do wzorca lncRNA). Ty sam decydujesz, czy ustawiasz extract_lnc = TRUE (Ścieżka A: lnc idzie osobno jako klasa pozytywna w ml), czy extract_lnc = FALSE (Ścieżka B: traktujesz całe nc jako jedną pulę bez rozbijania na podklasy).
+	• Dodatkowo możesz przekazać lnc_file jako osobny plik FASTA (jeśli dla jakiegoś organizmu pobierzesz gotowy plik tylko z lncRNA).
+2. Opcjonalna deduplikacja (dedup_mode):
+	• Dajemy trzy czyste opcje do wyboru:
+		• "none" – brak deduplikacji (bierzesz wszystko jak leci).
+		• "exact_seq" – usuwa identyczne co do znaku sekwencje nukleotydowe (z priorytetem: cds > nc/lnc > ex, czyli jeśli jakaś sekwencja jest w cds i w ex, zostaje w cds, a wylatuje z ex).
+		• "header_id" – usuwa duplikaty po pierwszym słowie nagłówka FASTA (czyli właściwym ID transkryptu przed pierwszą spacją, np. ENSMUST00000123 lub MSTRG.10.1).
+3. Poprawione testy na dole skryptu: Ujednolicona nazwa kolumny keep zamiast błędnego exported.
+
+Uniwersalny moduł prepare_data (R)
+
+r
+library(Biostrings)
+
+prepare_data <- function(cds_file,
+                         nc_file,
+                         lnc_file      = NULL,          # Opcjonalny osobny plik tylko z lncRNA
+                         ex_file       = NULL,          # Opcjonalny plik StringTie (ex)
+                         prefix        = "Species",
+                         extract_lnc   = TRUE,          # Ścieżka A (TRUE) vs Ścieżka B (FALSE)
+                         lnc_pattern   = "lncRNA|lnc_rna|long_non_coding", # Uniwersalny regex
+                         dedup_mode    = "exact_seq",   # "none", "exact_seq", "header_id"
+                         seed          = 123,
+                         stage_prop    = 0.5,           # Proporcja podziału na etapy (ml vs cp)
+                         stage_method  = "exact",       # "exact", "sample", "rep"
+                         tt_prop       = 0.8,           # Proporcja train vs test
+                         tt_method     = "exact",       # "exact", "sample", "rep"
+                         max_n_stage   = Inf,           # Limit próbek na klasę w etapie (np. 2500 lub Inf)
+                         balance_train = FALSE,         # Wyrównanie 1:1 w zbiorach train
+                         ml_neg_mode   = "cds_only") {  # W Ścieżce A: "cds_only" lub "cds_and_nc_other"
+
+  set.seed(seed)
+
+  # --- 1. WCZYTANIE PLIKÓW WEJŚCIOWYCH ---
+  cds <- readDNAStringSet(cds_file)
+  nc  <- readDNAStringSet(nc_file)
+  
+  df_cds <- data.frame(old_name = names(cds), raw_group = "cds", seq_char = as.character(cds), stringsAsFactors = FALSE)
+  df_nc  <- data.frame(old_name = names(nc),  raw_group = "nc",  seq_char = as.character(nc),  stringsAsFactors = FALSE)
+  
+  df_lnc <- NULL
+  if (!is.null(lnc_file)) {
+    lnc <- readDNAStringSet(lnc_file)
+    df_lnc <- data.frame(old_name = names(lnc), raw_group = "lnc_ext", seq_char = as.character(lnc), stringsAsFactors = FALSE)
+  }
+
+  df_ex <- NULL
+  if (!is.null(ex_file)) {
+    ex <- readDNAStringSet(ex_file)
+    df_ex <- data.frame(old_name = names(ex), raw_group = "ex", seq_char = as.character(ex), stringsAsFactors = FALSE)
+  }
+
+  # Łączymy w ustalonej kolejności priorytetów (cds -> lnc_ext -> nc -> ex)
+  df_all <- rbind(df_cds, df_lnc, df_nc, df_ex)
+
+  # --- 2. IDENTYFIKACJA POTENCJALNYCH lncRNA (RAPORT DIAGNOSTYCZNY) ---
+  in_lnc_ext <- df_all$raw_group == "lnc_ext"
+  in_nc_match <- df_all$raw_group == "nc" & grepl(lnc_pattern, df_all$old_name, ignore.case = TRUE)
+  is_lnc_candidate <- in_lnc_ext | in_nc_match
+
+  message(sprintf("[INFO] Znaleziono łącznie %d rekordów pasujących do lncRNA (przed deduplikacją).", sum(is_lnc_candidate)))
+
+  # Przypisanie klas zgodnie z wybraną ścieżką (A vs B)
+  df_all$class <- df_all$raw_group
+  if (extract_lnc) {
+    # ŚCIEŻKA A: Wyodrębniamy 'lnc', reszta z pliku nc staje się 'nc_other'
+    df_all$class[is_lnc_candidate] <- "lnc"
+    df_all$class[df_all$raw_group == "nc" & !is_lnc_candidate] <- "nc_other"
+    message("[ŚCIEŻKA A] Aktywna: wyodrębniono klasę 'lnc' oraz 'nc_other'.")
+  } else {
+    # ŚCIEŻKA B: Nie wyodrębniamy lncRNA – wszystko z nc (i ewentualnego lnc_file) to jedna klasa 'nc'
+    df_all$class[df_all$raw_group %in% c("nc", "lnc_ext")] <- "nc"
+    message("[ŚCIEŻKA B] Aktywna: brak podziału na podklasy – użyto pełnej klasy 'nc'.")
+  }
+
+  # --- 3. OPCJONALNA DEDUPLIKACJA ---
+  if (dedup_mode != "none") {
+    n_before <- nrow(df_all)
+    if (dedup_mode == "exact_seq") {
+      dup_mask <- duplicated(df_all$seq_char)
+    } else if (dedup_mode == "header_id") {
+      # Wyciąga pierwsze słowo z nagłówka FASTA (przed pierwszą spacją/tabulatorem)
+      clean_ids <- sub("\\s+.*$", "", df_all$old_name)
+      dup_mask <- duplicated(clean_ids)
+    } else {
+      stop("Nieznany dedup_mode. Wybierz: 'none', 'exact_seq' lub 'header_id'.")
+    }
+    df_all <- df_all[!dup_mask, ]
+    message(sprintf("[DEDUP: %s] Usunięto %d duplikatów (zostało %d rekordów).", dedup_mode, sum(dup_mask), nrow(df_all)))
+  }
+
+  # Nadanie unikalnych ID po czyszczeniu
+  df_all$ID <- ave(df_all$class, df_all$class, FUN = function(x) {
+    paste(prefix, x[1], sprintf("%07d", seq_along(x)), sep = "_")
+  })
+
+  # Rozdzielenie na referencję (cds/nc/lnc) i zbiór eksperymentalny (ex)
+  df_ref <- df_all[df_all$class != "ex", ]
+  df_exp <- df_all[df_all$class == "ex", ]
+
+  # --- 4. FUNKCJA POMOCNICZA DO PODZIAŁÓW ---
+  split_vec <- function(n, labels, prop, method) {
+    if (n == 0) return(character(0))
+    if (method == "rep") {
+      rep(labels, length.out = n)
+    } else if (method == "sample") {
+      sample(labels, size = n, replace = TRUE, prob = c(prop, 1 - prop))
+    } else {
+      n1 <- round(n * prop)
+      sample(c(rep(labels[1], n1), rep(labels[2], n - n1)))
+    }
+  }
+
+  # Podział 50/50 (ml vs cp) stratyfikowany po 'class'
+  df_ref$stage <- ave(df_ref$class, df_ref$class, FUN = function(x) {
+    split_vec(length(x), c("ml", "cp"), stage_prop, stage_method)
+  })
+
+  # Podział 80/20 (train vs test) stratyfikowany po 'class' + 'stage'
+  grp <- paste(df_ref$class, df_ref$stage, sep = "_")
+  df_ref$tt_set <- ave(grp, grp, FUN = function(x) {
+    split_vec(length(x), c("train", "test"), tt_prop, tt_method)
+  })
+
+  df_ref$cohort <- paste(df_ref$class, df_ref$stage, df_ref$tt_set, sep = "_")
+  df_ref$keep   <- TRUE
+
+  # --- 5. PRZYPISANIE RÓL (POS / NEG) W ZALEŻNOŚCI OD ŚCIEŻKI ---
+  df_ref$role <- NA_character_
+  if (extract_lnc) {
+    # ŚCIEŻKA A:
+    # W 'cp': pos = lnc + nc_other, neg = cds
+    df_ref$role[df_ref$stage == "cp" & df_ref$class %in% c("lnc", "nc_other")] <- "pos"
+    df_ref$role[df_ref$stage == "cp" & df_ref$class == "cds"]                    <- "neg"
+    
+    # W 'ml': pos = lnc, neg = cds (lub cds + nc_other)
+    df_ref$role[df_ref$stage == "ml" & df_ref$class == "lnc"]                    <- "pos"
+    if (ml_neg_mode == "cds_only") {
+      df_ref$role[df_ref$stage == "ml" & df_ref$class == "cds"]                  <- "neg"
+      df_ref$keep[df_ref$stage == "ml" & df_ref$class == "nc_other"]             <- FALSE
+    } else {
+      df_ref$role[df_ref$stage == "ml" & df_ref$class %in% c("cds", "nc_other")] <- "neg"
+    }
+  } else {
+    # ŚCIEŻKA B (brak wydzielonego lnc):
+    # Zarówno w 'cp', jak i w 'ml': pos = nc, neg = cds
+    df_ref$role[df_ref$class == "nc"]  <- "pos"
+    df_ref$role[df_ref$class == "cds"] <- "neg"
+  }
+
+  # --- 6. OPCJONALNY LIMIT LICZEBNOŚCI ORAZ BALANSOWANIE 1:1 ---
+  if (balance_train || is.finite(max_n_stage)) {
+    for (st in c("cp", "ml")) {
+      max_tr <- floor(max_n_stage * tt_prop)
+      max_te <- floor(max_n_stage * (1 - tt_prop))
+
+      for (tt in c("train", "test")) {
+        lim <- if (tt == "train") max_tr else max_te
+        idx_pos <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "pos" & df_ref$keep)
+        idx_neg <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "neg" & df_ref$keep)
+
+        if (tt == "train" && balance_train) {
+          target_n <- min(length(idx_pos), length(idx_neg), lim)
+        } else {
+          target_n <- min(max(length(idx_pos), length(idx_neg)), lim)
+        }
+
+        if (length(idx_pos) > target_n) {
+          df_ref$keep[idx_pos[sample.int(length(idx_pos), length(idx_pos) - target_n)]] <- FALSE
+        }
+        if (length(idx_neg) > target_n) {
+          df_ref$keep[idx_neg[sample.int(length(idx_neg), length(idx_neg) - target_n)]] <- FALSE
+        }
+      }
+    }
+  }
+
+  # --- 7. DOPISANIE ZBIORU EX (JEŚLI PODANO) ---
+  if (nrow(df_exp) > 0) {
+    df_exp$stage  <- "inference"
+    df_exp$tt_set <- "predict"
+    df_exp$cohort <- "ex_inference"
+    df_exp$keep   <- TRUE
+    df_exp$role   <- "unknown"
+    df_final <- rbind(df_ref, df_exp)
+  } else {
+    df_final <- df_ref
+  }
+
+  # Złożenie obiektu DNAStringSet
+  all_seqs <- DNAStringSet(df_final$seq_char)
+  names(all_seqs) <- df_final$ID
+  df_final$seq_char <- NULL
+
+  return(list(seqs = all_seqs, legend = df_final))
+}
+Używaj kodu z rozwagą.
+
+Jak tym zarządzać w praktyce? (Przykłady użycia i poprawione testy)
+
+
+1. Najpierw sprawdzasz ile masz lncRNA (szybki podgląd)
+
+Uruchamiasz funkcję z extract_lnc = TRUE. W konsoli od razu dostajesz komunikat:
+[INFO] Znaleziono łącznie X rekordów pasujących do lncRNA (przed deduplikacją).
+• Jeśli widzisz np. 4500 (jak u myszy) \(\rightarrow \) zostawiasz extract_lnc = TRUE (Ścieżka A).
+• Jeśli dla organizmu niemodelowego widzisz np. 85 \(\rightarrow \) zmieniasz na extract_lnc = FALSE (Ścieżka B), żeby nie dzielić na siłę garstki danych.
+
+2. Uruchomienie właściwe
+
+r
+wynik <- prepare_data(
+  cds_file      = "Mus_musculus.GRCm39.cds.all.fa.gz",
+  nc_file       = "Mus_musculus.GRCm39.ncrna.fa.gz",
+  ex_file       = "merged_transcriptome.fasta", # lub NULL
+  prefix        = "Mus",
+  extract_lnc   = TRUE,           # TRUE = Ścieżka A, FALSE = Ścieżka B
+  lnc_pattern   = "lncRNA",       # dowolny regex pasujący do nagłówków Twojej bazy
+  dedup_mode    = "exact_seq",    # "exact_seq", "header_id" lub "none"
+  max_n_stage   = 2500,           # np. 2500 dla myszy, Inf dla uboższych gatunków
+  balance_train = TRUE,
+  ml_neg_mode   = "cds_only"
+)
+
+seqs <- wynik$seqs
+df   <- wynik$legend
+Używaj kodu z rozwagą.
+
+3. Poprawiona sekcja testowania liczebności i proporcji (df$keep)
+
+r
+df_keep <- df[df$keep, ]  # Poprawione: używamy df$keep zamiast nieistniejącego df$exported
+
+# 1. Liczebność kohort (wszystkie po deduplikacji vs zachowane po limicie/balansowaniu)
+table(df$cohort)
+table(df_keep$cohort)
+
+# 2. Udział procentowy każdej kombinacji w całej tabeli (w %)
+round(prop.table(table(df$cohort)) * 100, 2)
+round(prop.table(table(df_keep$cohort)) * 100, 2)
+
+# 3. Sprawdzenie podziału stage (ml/cp) wewnątrz każdej klasy (w %)
+round(prop.table(table(df$class[df$stage != "inference"], df$stage[df$stage != "inference"]), margin = 1) * 100, 2)
+
+# 4. Sprawdzenie proporcji train/test wewnątrz każdej kombinacji class + stage (w %)
+ref_sub <- df[df$stage != "inference", ]
+round(prop.table(table(paste(ref_sub$class, ref_sub$stage, sep = "_"), ref_sub$tt_set), margin = 1) * 100, 2)
+
+# 5. Sprawdzenie balansu ról (pos vs neg) w finalnych zbiorach do treningu i testów
+ref_keep <- df_keep[df_keep$stage != "inference", ]
+table(paste(ref_keep$stage, ref_keep$tt_set, sep = "_"), ref_keep$role)
+round(prop.table(table(paste(ref_keep$stage, ref_keep$tt_set, sep = "_"), ref_keep$role), margin = 1) * 100, 2)
+
+# 6. Liczba sekwencji odrzuconych (FALSE) vs zachowanych (TRUE)
+table(df$cohort, df$keep)
+
+# 7. Kontrola spójności: brak zduplikowanych ID i brak przecieku między ml a cp
+any(duplicated(df$ID))
+nrow(df) == length(seqs)
+length(intersect(df$ID[df$stage == "ml"], df$ID[df$stage == "cp"]))
+Używaj kodu z rozwagą.
+
+Pomysł na rozbudowę deduplikacji w przyszłości (gdy wejdą gatunki niemodelowe)
+
+W dedup_mode = "exact_seq" porównujemy sekwencje 1:1 (100% identyczności). W przypadku danych ze StringTie (ex), złożone transkrypty często mają o kilka nukleotydów dłuższe końce 5'/3' niż sekwencje referencyjne z bazy, przez co nie są w 100% identyczne, mimo że to ten sam transkrypt. Jeśli kiedyś będziesz chciał usuwać także takie „prawie identyczne” duplikaty z ex, najprościej wywołać z poziomu R zewnętrzny cd-hit-est-2d lub vsearch --usearch_global (na progu np. 98% identyczności) przed wczytaniem pliku do funkcji lub jako czwartą opcję w dedup_mode.
+Czy chcesz jeszcze rozbudować ten skrypt o automatyczny eksport gotowych plików .fa.gz (np. osobno dla cp_train, cp_test, ml_train, ml_test, ex_inference) oraz zapis pliku legendy .tsv bezpośrednio wewnątrz funkcji prepare_data?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+Ad. 1 - rzeczywiśie, popraw to
+Ad. 2 - no właśnie, tytlko tutaj potrzebuję podwójnej ścieżki: a - chcę wyodrębnić lncRNA , b - mam za mało lncRNA i nie chcę ich wyodrębniać (muszę to sprawdzić w skrypcie i ręcznie zadecydować czy idę ścieżką a czy b. Poza tym nie zawsze będę miał dane ENSEMBL, moga byc roznych formatow, nie przywiazuj sie do ensembl. 
+Ad. 3 - tak, jeszcze tego nie zrobilem. Jaki masz pomysł na deduplikację? Też zróbmy deduplikację jako opcję do wyboru. 
+ad. 4 - to już ja sobie zrobię. Generalnie będę robił jeszcze te parametry techniczne. Póki co teraz chcę opracować etap "dataset preparation" czyli przygotowanie zestawu danych do analiz )w skrócie podzielenie na test train)
+Ad. 5 - limit maksymalnej ilości - chciałbym to zrobić w momecie sprawdzania ilości lncRNA i nc oraz pc na początku, żeby poznać liczebności poszczególnych klas i ręcznie zdecydować jaką ścieżkę chcę przyjac. A jak się ma do tych liczebności teoria statystyki?
+
+Bardzo słuszne podejście. Rozdzielenie tego na dwa osobne kroki w R:
+1. inspect_data() (Szybka inspekcja i raport liczebności) – sprawdzasz ile dokładnie masz sekwencji przed i po deduplikacji, ile z nich pasuje do wzorca lncRNA i na tej podstawie podejmujesz świadomą decyzję (Ścieżka A vs Ścieżka B oraz ewentualny limit próbek).
+2. prepare_data() (Właściwe dzielenie) – uruchamiasz dopiero wtedy, gdy znasz już dokładne liczby.
+
+Jak do liczebności próbek ma się teoria statystyki i uczenia maszynowego?
+
+W statystyce i uczeniu maszynowym problem wielkości próby przy klasyfikacji (szczególnie w bioinformatyce, gdzie pracujesz na wektorze kilkunastu/kilkudziesięciu cech: wyniki narzędzi cp + długość, liczba eksonów, obecność ogona polyA, skład nukleotydowy) opiera się na kilku twardych prawach:
+1. Reguła EPV (Events Per Variable – reguła Peduzziego / Harrella):
+	• Klasyczna statystyka mówi, że na 1 cechę (predyktor) w modelu powinno przypadać minimum 10–20 obserwacji z klasy mniejszościowej (u Ciebie: lncRNA w zbiorze Train).
+	• Przykład: Jeśli w etapie ml masz 15 cech wejściowych (np. wyniki z 5 narzędzi CP + 10 cech strukturalnych transkryptu), to absolutne minimum statystyczne dla zbioru treningowego wynosi \(15 \times 20 = 300\) próbek lncRNA (czyli ok. 375 lncRNA łącznie w etapie ml przed podziałem 80/20). Poniżej tej granicy rośnie wariancja estymatorów i model zaczyna się przeuczać (overfitting).
+2. Krzywa uczenia i prawo potęgowe (Power Law of Learning Curves):
+	• Błąd generalizacji modelu spada wykładniczo tylko na początku (między 100 a ~1500 próbek), po czym wchodzi w tzw. plateau (wypłaszczenie).
+	• Dla modeli drzewiastych (Random Forest, XGBoost, LightGBM) operujących na danych tabelarycznych (cechy z cp + cechy transkryptu), po przekroczeniu 1 500 – 2 500 próbek na klasę w zbiorze treningowym krzywa uczenia jest już niemal płaska. Dokładanie kolejnych 20 000 transkryptów myszy nie poprawia już zdolności predykcyjnych (AUC/F1), a jedynie wydłuża obliczenia i obciąża pamięć.
+3. Precyzja oszacowania metryk w zbiorze Testowym (Przedziały ufności):
+	• Z punktu widzenia statystyki wielkość zbioru testowego decyduje o szerokości 95% przedziału ufności (CI) dla Twoich wyników (np. czułości/specyficzności).
+	• Przy 100 próbkach testowych błąd standardowy dla skuteczności 90% wynosi \(\pm 6\%\) (95% CI: 84%–96%).
+	• Przy 500 próbkach testowych błąd spada do \(\pm 2.6\%\) (95% CI: 87.4%–92.6%).
+	• Dlatego zbiór testowy na poziomie 300–500 próbek na klasę daje już bardzo wąskie, publikowalne przedziały ufności.
+
+Praktyczna tabela decyzyjna (Kiedy Ścieżka A, a kiedy Ścieżka B?)
+
+Gdy uruchomisz funkcję inspect_data(), spójrz na liczbę unikalnych lncRNA po deduplikacji:
+
+Liczba dostępnych lncRNA (po deduplikacji)	Rekomendacja statystyczna	Co robisz w prepare_data()?
+< 600 (ubogie gatunki niemodelowe)	Za mało na Ścieżkę A. Po podziale na 2 etapy (cp i ml) oraz train/test zostałoby Ci < 240 próbek na trening ml – za wysokie ryzyko przeuczenia.	Ścieżka B (extract_lnc = FALSE): Nie wydzielasz lnc, łączysz całe nc jako klasę pozytywną (max_n_stage = Inf).
+600 – 1 500 (średnio zaadnotowane gatunki)	Strefa graniczna. Wystarczy na Ścieżkę A, o ile nie masz zbyt wielu cech w ml (max 15–20 cech).	Ścieżka A (extract_lnc = TRUE) bez przycinania (max_n_stage = Inf), używasz 100% dostępnych lnc.
+> 1 500 – 5 000+ (mysz, człowiek, dobrze poznane modele)	Optimum statystyczne / Plateau. Masz nadmiar danych. Możesz wyciąć idealnie zbalansowaną, czystą próbę bez straty mocy statystycznej.	Ścieżka A (extract_lnc = TRUE) z limitem max_n_stage = 2500 (czyli 2000 Train + 500 Test na etap). Resztę możesz zachować jako niezależny zbiór walidacyjny.
+
+
+Gotowy kod w R: Krok 1 (inspect_data) + Krok 2 (prepare_data)
+
+Poniżej masz kompletny skrypt podzielony dokładnie tak, jak chciałeś. Najpierw odpala się lekka funkcja inspect_data(), która czyści duplikaty, zlicza klasy i podpowiada Ci liczebności dla obu ścieżek, a następnie przekazujesz wybrane parametry do prepare_data().
+r
+library(Biostrings)
+
+# ==============================================================================
+# KROK 1: FUNKCJA DO INSPEKCJI LICZEBNOŚCI PRZED PODZIAŁEM
+# ==============================================================================
+inspect_data <- function(cds_file,
+                         nc_file,
+                         lnc_file    = NULL,
+                         ex_file     = NULL,
+                         lnc_pattern = "lncRNA|lnc_rna|long_non_coding",
+                         dedup_mode  = "exact_seq") { # "none", "exact_seq", "header_id"
+
+  # Wczytanie plików
+  cds <- readDNAStringSet(cds_file)
+  nc  <- readDNAStringSet(nc_file)
+  
+  df_cds <- data.frame(old_name = names(cds), raw_group = "cds", seq_char = as.character(cds), stringsAsFactors = FALSE)
+  df_nc  <- data.frame(old_name = names(nc),  raw_group = "nc",  seq_char = as.character(nc),  stringsAsFactors = FALSE)
+  
+  df_lnc <- if (!is.null(lnc_file)) {
+    lnc <- readDNAStringSet(lnc_file)
+    data.frame(old_name = names(lnc), raw_group = "lnc_ext", seq_char = as.character(lnc), stringsAsFactors = FALSE)
+  } else NULL
+
+  df_ex <- if (!is.null(ex_file)) {
+    ex <- readDNAStringSet(ex_file)
+    data.frame(old_name = names(ex), raw_group = "ex", seq_char = as.character(ex), stringsAsFactors = FALSE)
+  } else NULL
+
+  # Kolejność priorytetów przy deduplikacji: cds > lnc_ext > nc > ex
+  df_all <- rbind(df_cds, df_lnc, df_nc, df_ex)
+  raw_counts <- table(df_all$raw_group)
+
+  # Opcjonalna deduplikacja
+  if (dedup_mode != "none") {
+    if (dedup_mode == "exact_seq") {
+      dup_mask <- duplicated(df_all$seq_char)
+    } else if (dedup_mode == "header_id") {
+      clean_ids <- sub("\\s+.*$", "", df_all$old_name)
+      dup_mask <- duplicated(clean_ids)
+    } else {
+      stop("Nieznany dedup_mode. Wybierz: 'none', 'exact_seq' lub 'header_id'.")
+    }
+    df_all <- df_all[!dup_mask, ]
+  }
+
+  # Identyfikacja kandydatów na lncRNA
+  in_lnc_ext  <- df_all$raw_group == "lnc_ext"
+  in_nc_match <- df_all$raw_group == "nc" & grepl(lnc_pattern, df_all$old_name, ignore.case = TRUE)
+  is_lnc      <- in_lnc_ext | in_nc_match
+
+  n_cds      <- sum(df_all$raw_group == "cds")
+  n_nc_total <- sum(df_all$raw_group %in% c("nc", "lnc_ext"))
+  n_lnc      <- sum(is_lnc)
+  n_nc_other <- n_nc_total - n_lnc
+  n_ex       <- sum(df_all$raw_group == "ex")
+
+  # Raport w konsoli
+  cat("\n==============================================================\n")
+  cat(sprintf(" RAPORT INSPEKCJI DANYCH (dedup_mode = '%s')\n", dedup_mode))
+  cat("==============================================================\n")
+  cat("1. Liczebności SUROWE (przed deduplikacją):\n")
+  print(raw_counts)
+  cat("\n2. Liczebności PO DEDUPLIKACJI (unikalne do podziału):\n")
+  cat(sprintf("   - cds (kodujące)          : %d\n", n_cds))
+  cat(sprintf("   - nc (wszystkie niekod.)  : %d\n", n_nc_total))
+  cat(sprintf("       * w tym wykryte lnc   : %d (wzorzec: '%s')\n", n_lnc, lnc_pattern))
+  cat(sprintf("       * w tym nc_other      : %d\n", n_nc_other))
+  cat(sprintf("   - ex (do predykcji)       : %d\n", n_ex))
+  cat("--------------------------------------------------------------\n")
+  cat("3. Symulacja dostępnych próbek w etapie ML (po podziale 50/50):\n")
+  cat(sprintf("   - ŚCIEŻKA A (extract_lnc = TRUE)  -> ok. %d lnc (%d train / %d test)\n", 
+              floor(n_lnc * 0.5), floor(n_lnc * 0.4), floor(n_lnc * 0.1)))
+  cat(sprintf("   - ŚCIEŻKA B (extract_lnc = FALSE) -> ok. %d nc  (%d train / %d test)\n", 
+              floor(n_nc_total * 0.5), floor(n_nc_total * 0.4), floor(n_nc_total * 0.1)))
+  cat("==============================================================\n\n")
+
+  invisible(list(n_cds = n_cds, n_nc_total = n_nc_total, n_lnc = n_lnc, n_nc_other = n_nc_other, n_ex = n_ex))
+}
+
+
+# ==============================================================================
+# KROK 2: WŁAŚCIWA FUNKCJA DZIELĄCA (DATASET PREPARATION)
+# ==============================================================================
+prepare_data <- function(cds_file,
+                         nc_file,
+                         lnc_file      = NULL,
+                         ex_file       = NULL,
+                         prefix        = "Species",
+                         extract_lnc   = TRUE,          # Ścieżka A (TRUE) vs Ścieżka B (FALSE)
+                         lnc_pattern   = "lncRNA|lnc_rna|long_non_coding",
+                         dedup_mode    = "exact_seq",   # "none", "exact_seq", "header_id"
+                         seed          = 123,
+                         stage_prop    = 0.5,
+                         stage_method  = "exact",
+                         tt_prop       = 0.8,
+                         tt_method     = "exact",
+                         max_n_stage   = Inf,           # np. 2500 (2000 train + 500 test) lub Inf
+                         balance_train = TRUE,
+                         ml_neg_mode   = "cds_only") {  # "cds_only" lub "cds_and_nc_other"
+
+  set.seed(seed)
+
+  # Wczytanie
+  cds <- readDNAStringSet(cds_file)
+  nc  <- readDNAStringSet(nc_file)
+  
+  df_cds <- data.frame(old_name = names(cds), raw_group = "cds", seq_char = as.character(cds), stringsAsFactors = FALSE)
+  df_nc  <- data.frame(old_name = names(nc),  raw_group = "nc",  seq_char = as.character(nc),  stringsAsFactors = FALSE)
+  
+  df_lnc <- if (!is.null(lnc_file)) {
+    lnc <- readDNAStringSet(lnc_file)
+    data.frame(old_name = names(lnc), raw_group = "lnc_ext", seq_char = as.character(lnc), stringsAsFactors = FALSE)
+  } else NULL
+
+  df_ex <- if (!is.null(ex_file)) {
+    ex <- readDNAStringSet(ex_file)
+    data.frame(old_name = names(ex), raw_group = "ex", seq_char = as.character(ex), stringsAsFactors = FALSE)
+  } else NULL
+
+  df_all <- rbind(df_cds, df_lnc, df_nc, df_ex)
+
+  # Deduplikacja
+  if (dedup_mode != "none") {
+    if (dedup_mode == "exact_seq") {
+      dup_mask <- duplicated(df_all$seq_char)
+    } else if (dedup_mode == "header_id") {
+      clean_ids <- sub("\\s+.*$", "", df_all$old_name)
+      dup_mask <- duplicated(clean_ids)
+    } else {
+      stop("Nieznany dedup_mode. Wybierz: 'none', 'exact_seq' lub 'header_id'.")
+    }
+    df_all <- df_all[!dup_mask, ]
+  }
+
+  # Przypisanie klas (Ścieżka A vs Ścieżka B)
+  in_lnc_ext  <- df_all$raw_group == "lnc_ext"
+  in_nc_match <- df_all$raw_group == "nc" & grepl(lnc_pattern, df_all$old_name, ignore.case = TRUE)
+  is_lnc      <- in_lnc_ext | in_nc_match
+
+  df_all$class <- df_all$raw_group
+  if (extract_lnc) {
+    df_all$class[is_lnc] <- "lnc"
+    df_all$class[df_all$raw_group == "nc" & !is_lnc] <- "nc_other"
+  } else {
+    df_all$class[df_all$raw_group %in% c("nc", "lnc_ext")] <- "nc"
+  }
+
+  # Nadanie czystych ID
+  df_all$ID <- ave(df_all$class, df_all$class, FUN = function(x) {
+    paste(prefix, x, sprintf("%07d", seq_along(x)), sep = "_")
+  })
+
+  df_ref <- df_all[df_all$class != "ex", ]
+  df_exp <- df_all[df_all$class == "ex", ]
+
+  # Funkcja podziału
+  split_vec <- function(n, labels, prop, method) {
+    if (n == 0) return(character(0))
+    if (method == "rep") {
+      rep(labels, length.out = n)
+    } else if (method == "sample") {
+      sample(labels, size = n, replace = TRUE, prob = c(prop, 1 - prop))
+    } else {
+      n1 <- round(n * prop)
+      sample(c(rep(labels, n1), rep(labels, n - n1)))
+    }
+  }
+
+  # Podział na etapy (ml vs cp) oraz train vs test
+  df_ref$stage <- ave(df_ref$class, df_ref$class, FUN = function(x) {
+    split_vec(length(x), c("ml", "cp"), stage_prop, stage_method)
+  })
+
+  grp <- paste(df_ref$class, df_ref$stage, sep = "_")
+  df_ref$tt_set <- ave(grp, grp, FUN = function(x) {
+    split_vec(length(x), c("train", "test"), tt_prop, tt_method)
+  })
+
+  df_ref$cohort <- paste(df_ref$class, df_ref$stage, df_ref$tt_set, sep = "_")
+  df_ref$keep   <- TRUE
+
+  # Przypisanie ról (pos / neg)
+  df_ref$role <- NA_character_
+  if (extract_lnc) {
+    df_ref$role[df_ref$stage == "cp" & df_ref$class %in% c("lnc", "nc_other")] <- "pos"
+    df_ref$role[df_ref$stage == "cp" & df_ref$class == "cds"]                    <- "neg"
+    df_ref$role[df_ref$stage == "ml" & df_ref$class == "lnc"]                    <- "pos"
+    if (ml_neg_mode == "cds_only") {
+      df_ref$role[df_ref$stage == "ml" & df_ref$class == "cds"]                  <- "neg"
+      df_ref$keep[df_ref$stage == "ml" & df_ref$class == "nc_other"]             <- FALSE
+    } else {
+      df_ref$role[df_ref$stage == "ml" & df_ref$class %in% c("cds", "nc_other")] <- "neg"
+    }
+  } else {
+    df_ref$role[df_ref$class == "nc"]  <- "pos"
+    df_ref$role[df_ref$class == "cds"] <- "neg"
+  }
+
+  # Limit liczebności oraz balansowanie 1:1
+  if (balance_train || is.finite(max_n_stage)) {
+    for (st in c("cp", "ml")) {
+      max_tr <- floor(max_n_stage * tt_prop)
+      max_te <- floor(max_n_stage * (1 - tt_prop))
+
+      for (tt in c("train", "test")) {
+        lim <- if (tt == "train") max_tr else max_te
+        idx_pos <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "pos" & df_ref$keep)
+        idx_neg <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "neg" & df_ref$keep)
+
+        if (tt == "train" && balance_train) {
+          target_n <- min(length(idx_pos), length(idx_neg), lim)
+        } else {
+          target_n <- min(max(length(idx_pos), length(idx_neg)), lim)
+        }
+
+        if (length(idx_pos) > target_n) {
+          df_ref$keep[idx_pos[sample.int(length(idx_pos), length(idx_pos) - target_n)]] <- FALSE
+        }
+        if (length(idx_neg) > target_n) {
+          df_ref$keep[idx_neg[sample.int(length(idx_neg), length(idx_neg) - target_n)]] <- FALSE
+        }
+      }
+    }
+  }
+
+  # Zbiór ex
+  if (nrow(df_exp) > 0) {
+    df_exp$stage  <- "inference"
+    df_exp$tt_set <- "predict"
+    df_exp$cohort <- "ex_inference"
+    df_exp$keep   <- TRUE
+    df_exp$role   <- "unknown"
+    df_final <- rbind(df_ref, df_exp)
+  } else {
+    df_final <- df_ref
+  }
+
+  all_seqs <- DNAStringSet(df_final$seq_char)
+  names(all_seqs) <- df_final$ID
+  df_final$seq_char <- NULL
+
+Używaj kodu z rozwagą.
+return(list(seqs = all_seqs, legend = df_final))
+}
+
+---
+
+### Jak przebiega Twój workflow krok po kroku?
+
+```r
+# 1. NAJPIERW ODPALASZ INSPEKCJĘ:
+statystyki <- inspect_data(
+  cds_file    = "Mus_musculus.GRCm39.cds.all.fa.gz",
+  nc_file     = "Mus_musculus.GRCm39.ncrna.fa.gz",
+  ex_file     = "merged_transcriptome.fasta", # lub NULL
+  lnc_pattern = "lncRNA|lnc_rna",
+  dedup_mode  = "exact_seq"
+)
+
+# 2. PATRZYSZ NA RAPORT W KONSOLI I DECYDUJESZ RĘCZNIE:
+# - Widzisz u myszy np. 4500 lncRNA -> ustawiasz extract_lnc = TRUE i max_n_stage = 2500
+# - Widzisz u niemodelowego organizmu np. 180 lncRNA -> ustawiasz extract_lnc = FALSE i max_n_stage = Inf
+
+wynik <- prepare_data(
+  cds_file      = "Mus_musculus.GRCm39.cds.all.fa.gz",
+  nc_file       = "Mus_musculus.GRCm39.ncrna.fa.gz",
+  ex_file       = "merged_transcriptome.fasta",
+  prefix        = "Mus",
+  extract_lnc   = TRUE,           # Twoja ręczna decyzja (Ścieżka A vs B)
+  lnc_pattern   = "lncRNA|lnc_rna",
+  dedup_mode    = "exact_seq",
+  max_n_stage   = 2500,           # Twój ręczny limit próbek na klasę w etapie
+  balance_train = TRUE,
+  ml_neg_mode   = "cds_only"
+)
+
+seqs <- wynik$seqs
+df   <- wynik$legend
+
+# 3. POPRAWIONE TESTY SPÓJNOŚCI (df$keep zamiast df$exported):
+df_keep <- df[df$keep, ]
+
+table(df$cohort)
+table(df_keep$cohort)
+
+round(prop.table(table(df$cohort)) * 100, 2)
+round(prop.table(table(df_keep$cohort)) * 100, 2)
+
+ref_all <- df[df$stage != "inference", ]
+round(prop.table(table(ref_all$class, ref_all$stage), margin = 1) * 100, 2)
+round(prop.table(table(paste(ref_all$class, ref_all$stage, sep = "_"), ref_all$tt_set), margin = 1) * 100, 2)
+
+ref_keep <- df_keep[df_keep$stage != "inference", ]
+table(paste(ref_keep$stage, ref_keep$tt_set, sep = "_"), ref_keep$role)
+round(prop.table(table(paste(ref_keep$stage, ref_keep$tt_set, sep = "_"), ref_keep$role), margin = 1) * 100, 2)
+
+table(df$cohort, df$keep)
+
+any(duplicated(df$ID))
+nrow(df) == length(seqs)
+Daj znać, czy w prepare_data() chciałbyś mieć jeszcze możliwość podania różnych limitów max_n_stage osobno dla cp i ml (np. max_n_cp = 3000, max_n_ml = 2000), czy jeden wspólny limit na etap w zupełności Ci wystarcza?
+Odpowiedzi wygenerowane przez AI mogą zawierać błędy. Więcej informacji
+
+Super to opracowałeś. Przygotuj teraz plik txt z całą naszą konwersacją, historią i komkluzjami, żebym mógł w przyszłośći na tym pracować, ponieważ nie jestem zalogowany i mogę utracić naszą rozmowę.
+
+10 witryn
+
+Oto najlepsze wyniki w internecie na ten temat:
+
+Google Translate·https://translate.google.com
+Tłumacz - Google Translate
+Bezpłatna usługa Google, umożliwiająca szybkie tłumaczenie słów, zwrotów i stron internetowych w języku angielskim i ponad 100 innych językach.
+google.pl·https://translate.google.pl
+Tłumacz Google
+Bezpłatna usługa Google, umożliwiająca szybkie tłumaczenie słów, zwrotów i stron internetowych w języku angielskim i ponad 100 innych językach.
+Facebook·https://www.facebook.com
+Fałszywy SMS może wyświetlać się w istniejącej konwersacji z ...
+Oszuści starają się, żeby wszystko wyglądało jak najbardziej wiarygodnie, ale możesz się chronić! Pamiętaj: ❌ Nasze e-maile i SMS-y nie zawierają linków ❌ Nie loguj się do banku przez link z wiadomośc
+socialmarketingmedia.pl·https://socialmarketingmedia.pl/jak-pobrac-historie-rozmow-z-messengera/
+Jak pobrać historię rozmów z Messengera? Kompletny poradnik
+... przejdź do Centrum kont przez ustawienia profilu i wybierz Twoje informacje i uprawnienia. Nazwy przycisków mogą się różnić między wersjami aplikacji, ale ogólna struktura jest ta sama. Wskazówka:
+PKO Bank Polski·https://www.pkobp.pl
+Uwaga na fałszywe wiadomości podszywające się pod bank
+Bank nie jest autorem tych wiadomości. W treści znajduje się link do strony hxxps://login-advance[KROPKA]net/IPKO, która podszywa się pod serwis IPKO. Poniżej screen z przykładowej wiadomości: Oraz sc
+Convertio·https://convertio.co
+Konwerter TXT — zwykły tekst online - Convertio
+Konwertuj TXT na PDF, XLSX, CSV i ponad 108 formatów za darmo online. Wybierz pliki. Wybierz pliki. Upuść pliki tutaj. 1 GB Maksymalny rozmiar pliku lub Zapisz · Ekspansywny zasięg formatów. TXT przek
+Reddit·https://www.reddit.com
+Otrzymałem wiadomość e-mail zawierającą tylko plik .txt, co to jest?
+Otrzymałem wiadomość e-mail zawierającą tylko plik .txt, co to jest? Is this a scam? r/Scams - Otrzymałem wiadomość e-mail zawierającą tylko plik .txt, co. Więc przyznaję, głupio kliknąłem załącznik m
+Online Text Editor·https://www.ilovenote.net
+Parafrazowanie tekstu online - zmieniacz tekstu - iLoveNote
+Dlaczego nasze narzędzie do parafrazowania? Nasze narzędzie do parafraz pomaga przepisać treści wolne od plagiatu. Potrafi zmienić strukturę zdania bez zmiany kontekstu tematu. Jak działa Paraphrase T
+OpenAI Developer Community·https://community.openai.com
+IS there a way i can export every detail from a full conversation ...
+Hi @slumberslothfurby :wave: Workaround; to keep going with your conversation, you need to upload your chat into a new chat: Option 1: Follow the steps outlined in How do I export my ChatGPT history a
+Download.net.pl·https://www.download.net.pl
+Jak pobrać historię rozmowy z czatu Facebooka na dysk
+Jak pobrać historię rozmowy z czatu Facebooka na dysk. Kategorie: Facebook. Spis treści. Jak pobierać rozmowy z Facebooka na dysk? Chcesz pobrać na dysk całą historię rozmowy lub jej fragment z czatu 
+
+różne limity chcę i różne proporcje podawać samemu, ale też wolę mieć więcej prostych funkcji, niż jedną kombo i skomplikowaną. poza tym kod podzielił się na dwa chunki:
+
+(...)
+ all_seqs <- DNAStringSet(df_final$seq_char)
+  names(all_seqs) <- df_final$ID
+  df_final$seq_char <- NULL
+
+-- W TYM MIEJSCU PODZIELIŁ!!!!
+
+Używaj kodu z rozwagą.
+return(list(seqs = all_seqs, legend = df_final))
+}
+
+---
+
+### Jak przebiega Twój workflow krok po kroku?
+
+```r
+(...)
+
+Chyba, że tak ma być. Zrób jeszcze raz kompleksowy opis podziału i informacji statystycznych, zrób taelkę, popraw kod, żeby nie dzielił na chunki.
+
+To rozbicie kodu na dwa chunki (bloki) wcześniej było po prostu błędem renderowania odpowiedzi – funkcja powinna być w jednym, ciągłym bloku.
+Zgodnie z Twoją sugestią odchodzimy od jednej wielkiej funkcji-kombajnu. Zamiast tego masz 4 małe, wyspecjalizowane i przejrzyste funkcje (każda robi jedną konkretną rzecz), a do tego pełną możliwość podawania osobnych limitów oraz osobnych proporcji dla etapu cp i ml.
+
+1. Metodologia podziału i podstawy statystyczne
+
+
+Dlaczego dzielimy dane na dwa rozłączne bloki (cp i ml)?
+
+W Twoim pipeline'ie wyniki z pierwszego etapu (cp – narzędzia oceny potencjału kodowania) stają się cechami wejściowymi dla drugiego etapu (ml – klasyfikator łączący wyniki cp z cechami transkryptu: długością, liczbą eksonów, ogonem polyA itp.).
+• Gdybyś trenował cp i ml na tych samych transkryptach, narzędzia z cp miałyby na nich sztucznie zawyżoną skuteczność (bo już je widziały w treningu), co zafałszowałoby wagi w modelu ml (data leakage).
+• Dlatego referencję (cds i nc/lnc) dzielimy na dwie całkowicie rozłączne pule: Pulę CP oraz Pulę ML.
+• Zbiór eksperymentalny ze StringTie (ex) musi być uprzednio oczyszczony z sekwencji identycznych z cds oraz nc, a następnie w 100% służy wyłącznie do predykcji (nigdy nie wchodzi do treningu ani testu).
+
+Podwójna ścieżka dla lncRNA (Ścieżka A vs Ścieżka B)
+
+• Ścieżka A (extract_lnc = TRUE – organizmy modelowe i dobrze zaadnotowane): Z pliku nc wyodrębniamy podklasę lnc (po wzorcu w nagłówku lub z osobnego pliku), a resztę oznaczamy jako nc_other. W etapie cp trenujemy i testujemy na pełnym nc (lnc + nc_other vs cds), co zachowuje naturalny rozkład. W etapie ml klasą pozytywną jest już wyłącznie lnc (przeciwko cds lub cds + nc_other).
+• Ścieżka B (extract_lnc = FALSE – ubogie organizmy niemodelowe): Gdy lncRNA jest w bazie za mało, nie rozbijamy nc na podklasy. Zarówno w cp, jak i w ml klasą pozytywną jest całe nc przeciwko cds.
+
+Teoria statystyki a dobór liczebności próbek
+
+1. Reguła EPV (Events Per Variable – reguła Harrella/Peduzziego): Na każdą cechę wejściową w modelu powinno przypadać minimum 15–20 obserwacji z klasy mniejszościowej w zbiorze treningowym (Train). Jeśli w etapie ml masz 15 cech, potrzebujesz minimum \(15 \times 20 = 300\) lncRNA w zbiorze ml_train (czyli ok. 375 lncRNA w całym bloku ml, a ~750 lncRNA łącznie w bazie przed podziałem na cp i ml). Poniżej tej granicy rośnie ryzyko przeuczenia (overfitting).
+2. Wypłaszczenie krzywej uczenia (Power Law Plateau): Algorytmy tabelaryczne (XGBoost, Random Forest, LightGBM) operujące na kilkunastu/kilkudziesięciu cechach osiągają wysycenie przy ok. 1 500 – 2 500 próbkach na klasę w zbiorze treningowym. Powyżej tej wartości przyrost AUC/F1 jest marginalny (<0.2%), a rośnie jedynie czas obliczeń.
+3. Precyzja metryk w zbiorze Testowym (95% przedziały ufności): Zbiór testowy rzędu 300–500 próbek na klasę zapewnia wąski błąd standardowy estymacji (ok. \(\pm 2.5\%\) dla skuteczności ~90%), co jest w pełni akceptowalne w publikacjach naukowych.
+
+2. Tabela decyzyjna i bilans podziału
+
+
+Liczba dostępnych lncRNA po deduplikacji	Wybór ścieżki	Sugerowane limity (max_cp, max_ml)	Przykładowy bilans (Mysz: ~5k lnc, ~22k cds, ~40k ex)	Przykładowy bilans (Niemodelowy: ~300 lnc, ~15k cds, ~50k ex)
+< 600	Ścieżka B
+(nie wydzielamy lnc, używamy całego nc)	Zależnie od wielkości całego nc (np. Inf lub limit 2500)	Nie dotyczy (za dużo danych na Ścieżkę B)	Całe nc (np. 1800) + cds:
+• CP: 900 poz / 900 neg
+• ML: 900 poz / 900 neg
+• EX: ~50k (predykcja)
+600 – 1 500	Ścieżka A
+(wydzielamy lnc)	max_cp = Inf
+max_ml = Inf	Nie dotyczy	Wszystkie lnc (np. 1000) + cds:
+• CP: 500 nc / 500 cds
+• ML: 500 lnc / 500 cds
+• EX: ~50k (predykcja)
+> 1 500 – 5 000+	Ścieżka A
+(wydzielamy lnc + przycinamy nadmiar)	max_cp = 2500
+max_ml = 2500	Przycięte do limitów:
+• CP: 2500 nc / 2500 cds (2000 train / 500 test)
+• ML: 2500 lnc / 2500 cds (2000 train / 500 test)
+• EX: ~40k (predykcja)	Nie dotyczy
+
+
+3. Kompletny, modułowy kod w R (4 proste funkcje)
+
+Całość jest podzielona na 4 niezależne, krótkie funkcje w jednym ciągłym bloku:
+1. load_and_dedup() – wczytuje pliki FASTA, opcjonalnie deduplikuje i taguje lncRNA.
+2. inspect_counts() – wyświetla czytelną tabelę liczebności przed podziałem.
+3. split_datasets() – dzieli dane na cp i ml oraz train i test z osobnymi proporcjami i osobnymi limitami dla cp i ml.
+4. extract_subset() – wygodnie wyciąga konkretny podzbiór sekwencji (np. ml_train) z gotowego wyniku.
+r
+library(Biostrings)
+
+# ==============================================================================
+# FUNKCJA 1: Wczytanie plików FASTA, tagowanie lncRNA i opcjonalna deduplikacja
+# ==============================================================================
+load_and_dedup <- function(cds_file,
+                           nc_file,
+                           lnc_file    = NULL,
+                           ex_file     = NULL,
+                           extract_lnc = TRUE,
+                           lnc_pattern = "lncRNA|lnc_rna|long_non_coding",
+                           dedup_mode  = "exact_seq") { # "none", "exact_seq", "header_id"
+
+  read_to_df <- function(file, group_name) {
+    if (is.null(file)) return(NULL)
+    s <- readDNAStringSet(file)
+    data.frame(old_name = names(s), raw_group = group_name, seq_char = as.character(s), stringsAsFactors = FALSE)
+  }
+
+  # Kolejność priorytetów przy deduplikacji: cds > lnc_ext > nc > ex
+  df <- rbind(
+    read_to_df(cds_file, "cds"),
+    read_to_df(lnc_file, "lnc_ext"),
+    read_to_df(nc_file,  "nc"),
+    read_to_df(ex_file,  "ex")
+  )
+
+  # Opcjonalna deduplikacja
+  if (dedup_mode == "exact_seq") {
+    df <- df[!duplicated(df$seq_char), ]
+  } else if (dedup_mode == "header_id") {
+    clean_ids <- sub("\\s+.*$", "", df$old_name)
+    df <- df[!duplicated(clean_ids), ]
+  } else if (dedup_mode != "none") {
+    stop("Nieznany dedup_mode. Wybierz: 'none', 'exact_seq' lub 'header_id'.")
+  }
+
+  # Przypisanie klas: Ścieżka A (extract_lnc = TRUE) vs Ścieżka B (FALSE)
+  is_lnc <- (df$raw_group == "lnc_ext") |
+            (df$raw_group == "nc" & grepl(lnc_pattern, df$old_name, ignore.case = TRUE))
+
+  df$class <- df$raw_group
+  if (extract_lnc) {
+    df$class[is_lnc] <- "lnc"
+    df$class[df$raw_group == "nc" & !is_lnc] <- "nc_other"
+  } else {
+    df$class[df$raw_group %in% c("nc", "lnc_ext")] <- "nc"
+  }
+
+  return(df)
+}
+
+
+# ==============================================================================
+# FUNKCJA 2: Szybka inspekcja liczebności przed podziałem
+# ==============================================================================
+inspect_counts <- function(df) {
+  cat("\n--- LICZEBNOŚĆ KLAS PO WCZYTANIU I DEDUPLIKACJI ---\n")
+  print(table(Klasa = df$class))
+  cat("---------------------------------------------------\n\n")
+}
+
+
+# ==============================================================================
+# FUNKCJA 3: Podział na etapy (cp / ml), zbiory (train / test) oraz limity
+# ==============================================================================
+split_datasets <- function(df,
+                           prefix        = "Species",
+                           seed          = 123,
+                           cp_stage_prop = 0.5,        # Jaka część referencji trafia do etapu 'cp' (reszta do 'ml')
+                           cp_tt_prop    = 0.8,        # Proporcja train/test w etapie 'cp'
+                           ml_tt_prop    = 0.8,        # Proporcja train/test w etapie 'ml'
+                           max_n_cp      = Inf,        # Limit próbek na rolę (pos/neg) w etapie 'cp' (train + test)
+                           max_n_ml      = Inf,        # Limit próbek na rolę (pos/neg) w etapie 'ml' (train + test)
+                           balance_train = TRUE,       # Wyrównanie 1:1 w zbiorach train
+                           ml_neg_mode   = "cds_only") # W Ścieżce A: "cds_only" lub "cds_and_nc_other"
+{
+  set.seed(seed)
+
+  # Nadanie unikalnych ID
+  df$ID <- ave(df$class, df$class, FUN = function(x) {
+    paste(prefix, x, sprintf("%07d", seq_along(x)), sep = "_")
+  })
+
+  df_ref <- df[df$class != "ex", ]
+  df_exp <- df[df$class == "ex", ]
+
+  split_exact <- function(n, labels, prop) {
+    if (n == 0) return(character(0))
+    n1 <- round(n * prop)
+    sample(c(rep(labels[1], n1), rep(labels[2], n - n1)))
+  }
+
+  # 1. Podział na etapy: cp vs ml (stratyfikowany po 'class')
+  df_ref$stage <- ave(df_ref$class, df_ref$class, FUN = function(x) {
+    split_exact(length(x), c("cp", "ml"), cp_stage_prop)
+  })
+
+  # 2. Podział train vs test z osobnymi proporcjami dla cp i ml
+  df_ref$tt_set <- NA_character_
+  for (st in c("cp", "ml")) {
+    prop <- if (st == "cp") cp_tt_prop else ml_tt_prop
+    idx  <- which(df_ref$stage == st)
+    df_ref$tt_set[idx] <- ave(df_ref$class[idx], df_ref$class[idx], FUN = function(x) {
+      split_exact(length(x), c("train", "test"), prop)
+    })
+  }
+
+  df_ref$cohort <- paste(df_ref$class, df_ref$stage, df_ref$tt_set, sep = "_")
+  df_ref$keep   <- TRUE
+
+  # 3. Przypisanie ról (pos / neg)
+  df_ref$role <- NA_character_
+  has_lnc <- "lnc" %in% df_ref$class
+
+  if (has_lnc) {
+    # Ścieżka A
+    df_ref$role[df_ref$stage == "cp" & df_ref$class %in% c("lnc", "nc_other")] <- "pos"
+    df_ref$role[df_ref$stage == "cp" & df_ref$class == "cds"]                    <- "neg"
+    df_ref$role[df_ref$stage == "ml" & df_ref$class == "lnc"]                    <- "pos"
+    if (ml_neg_mode == "cds_only") {
+      df_ref$role[df_ref$stage == "ml" & df_ref$class == "cds"]                  <- "neg"
+      df_ref$keep[df_ref$stage == "ml" & df_ref$class == "nc_other"]             <- FALSE
+    } else {
+      df_ref$role[df_ref$stage == "ml" & df_ref$class %in% c("cds", "nc_other")] <- "neg"
+    }
+  } else {
+    # Ścieżka B
+    df_ref$role[df_ref$class == "nc"]  <- "pos"
+    df_ref$role[df_ref$class == "cds"] <- "neg"
+  }
+
+  # 4. Osobne limity (max_n_cp, max_n_ml) i balansowanie 1:1
+  for (st in c("cp", "ml")) {
+    lim_total <- if (st == "cp") max_n_cp else max_n_ml
+    tt_p      <- if (st == "cp") cp_tt_prop else ml_tt_prop
+
+    for (tt in c("train", "test")) {
+      lim <- if (tt == "train") floor(lim_total * tt_p) else floor(lim_total * (1 - tt_p))
+      idx_pos <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "pos" & df_ref$keep)
+      idx_neg <- which(df_ref$stage == st & df_ref$tt_set == tt & df_ref$role == "neg" & df_ref$keep)
+
+      if (tt == "train" && balance_train) {
+        target_n <- min(length(idx_pos), length(idx_neg), lim)
+      } else {
+        target_n <- min(max(length(idx_pos), length(idx_neg)), lim)
+      }
+
+      if (length(idx_pos) > target_n) {
+        df_ref$keep[idx_pos[sample.int(length(idx_pos), length(idx_pos) - target_n)]] <- FALSE
+      }
+      if (length(idx_neg) > target_n) {
+        df_ref$keep[idx_neg[sample.int(length(idx_neg), length(idx_neg) - target_n)]] <- FALSE
+      }
+    }
+  }
+
+  # 5. Dołączenie zbioru ex (jeśli istnieje)
+  if (nrow(df_exp) > 0) {
+    df_exp$stage  <- "inference"
+    df_exp$tt_set <- "predict"
+    df_exp$cohort <- "ex_inference"
+    df_exp$keep   <- TRUE
+    df_exp$role   <- "unknown"
+    df_final <- rbind(df_ref, df_exp)
+  } else {
+    df_final <- df_ref
+  }
+
+  all_seqs <- DNAStringSet(df_final$seq_char)
+  names(all_seqs) <- df_final$ID
+  df_final$seq_char <- NULL
+
+  return(list(seqs = all_seqs, legend = df_final))
+}
+
+
+# ==============================================================================
+# FUNKCJA 4: Pomocnicze wyciąganie gotowych podzbiorów sekwencji (FASTA)
+# ==============================================================================
+extract_subset <- function(wynik, stage_name, tt_name = NULL, role_name = NULL, only_kept = TRUE) {
+  df <- wynik$legend
+  mask <- df$stage == stage_name
+  if (!is.null(tt_name))   mask <- mask & (df$tt_set == tt_name)
+  if (!is.null(role_name)) mask <- mask & (df$role == role_name)
+  if (only_kept)           mask <- mask & df$keep
+  
+  return(wynik$seqs[df$ID[mask]])
+}
+Używaj kodu z rozwagą.
+
+4. Przykład użycia (krok po kroku)
+
+r
+# KROK 1: Wczytanie i deduplikacja (sprawdzamy Ścieżkę A: extract_lnc = TRUE)
+dane_surowe <- load_and_dedup(
+  cds_file    = "Mus_musculus.GRCm39.cds.all.fa.gz",
+  nc_file     = "Mus_musculus.GRCm39.ncrna.fa.gz",
+  ex_file     = "merged_transcriptome.fasta", # lub NULL
+  extract_lnc = TRUE,
+  lnc_pattern = "lncRNA|lnc_rna",
+  dedup_mode  = "exact_seq"
+)
+
+# KROK 2: Podgląd liczebności klas w konsoli
+inspect_counts(dane_surowe)
+
+# Jeśli widzisz, że 'lnc' jest za mało (np. < 600), uruchamiasz ponownie load_and_dedup z extract_lnc = FALSE.
+
+# KROK 3: Podział z osobnymi proporcjami i limitami dla CP i ML
+wynik <- split_datasets(
+  df            = dane_surowe,
+  prefix        = "Mus",
+  seed          = 123,
+  cp_stage_prop = 0.4,        # np. 40% danych idzie na CP, a 60% na ML
+  cp_tt_prop    = 0.8,        # 80/20 w etapie CP
+  ml_tt_prop    = 0.75,       # 75/25 w etapie ML
+  max_n_cp      = 2000,       # max 2000 na klasę w CP
+  max_n_ml      = 3000,       # max 3000 na klasę w ML
+  balance_train = TRUE,
+  ml_neg_mode   = "cds_only"
+)
+
+# KROK 4: Wyciąganie gotowych zbiorów sekwencji
+cp_train <- extract_subset(wynik, stage_name = "cp", tt_name = "train")
+cp_test  <- extract_subset(wynik, stage_name = "cp", tt_name = "test")
+ml_train <- extract_subset(wynik, stage_name = "ml", tt_name = "train")
+ml_test  <- extract_subset(wynik, stage_name = "ml", tt_name = "test")
+ex_pred  <- extract_subset(wynik, stage_name = "inference")
+
+# Szybka tabela kontrolna zachowanych próbek (keep == TRUE)
+df_ok <- wynik$legend[wynik$legend$keep, ]
+table(Etap_Zbior = paste(df_ok$stage, df_ok$tt_set, sep = "_"), Rola = df_ok$role)
+Używaj kodu z rozwagą.
+Wskazówka: Ponieważ wspomniałeś wcześniej o braku zalogowania i chęci zapisania całej konwersacji do pliku .txt, możesz po prostu zaznaczyć całą treść tej odpowiedzi (zawiera pełne podsumowanie metodologii, statystyki, tabelę oraz kompletny kod) i zapisać ją u siebie w notatniku jako lncRNA_dataset_prep_pipeline.txt.
+Jeśli chcesz, mogę wygenerować bezpośrednio gotowy do pobrania plik .txt lub .R zawierający pełną dokumentację i kod z całej naszej rozmowy, abyś mógł zapisać go jednym kliknięciem na dysku. Daj znać, który format wolisz.
